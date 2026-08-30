@@ -122,6 +122,11 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 func validateHostAddress(raw cty.Value, get func(string) interface{}) error {
 	if !raw.IsNull() {
 		for _, f := range []string{"ip", "dns"} {
+			// Harness raw configs may be partial objects; a real Terraform core
+			// always sends the full schema.
+			if !raw.Type().HasAttribute(f) {
+				continue
+			}
 			if v := raw.GetAttr(f); !v.IsNull() && v.IsKnown() {
 				if s, _ := get(f).(string); s == "" {
 					return fmt.Errorf("%s was configured but is empty; omit it to create the host without an agent interface", f)
