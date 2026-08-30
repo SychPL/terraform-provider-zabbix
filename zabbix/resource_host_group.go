@@ -34,7 +34,7 @@ func resourceHostGroupCreate(ctx context.Context, d *schema.ResourceData, m inte
 
 	id, err := client.CreateHostGroup(ctx, d.Get("name").(string))
 	if err != nil {
-		return diag.Errorf("creating host group: %s", err)
+		return createError("host group", d.Get("name").(string), err)
 	}
 	d.SetId(id)
 	return readAfterCreate(ctx, d, m, resourceHostGroupRead, "host group")

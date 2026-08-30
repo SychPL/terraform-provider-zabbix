@@ -89,7 +89,7 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	if cfg.APIToken == "" && (cfg.Username == "" || cfg.Password == "") {
 		return nil, diag.Errorf("either api_token or both username and password must be configured (or the ZABBIX_API_TOKEN / ZABBIX_USERNAME / ZABBIX_PASSWORD environment variables)")
 	}
-	if cfg.APIToken != "" && cfg.Username != "" {
+	if cfg.APIToken != "" && (cfg.Username != "" || cfg.Password != "") {
 		// Both methods resolved (typically one of them from globally exported
 		// ZABBIX_* variables in CI): the explicitly configured one wins; two
 		// explicit methods (or two ambient ones) are a hard error.

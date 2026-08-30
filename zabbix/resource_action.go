@@ -2,8 +2,10 @@ package zabbix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -230,6 +232,16 @@ func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ in
 				return fmt.Errorf("operator %d is not valid for condition type %d (allowed: %v)", op, ct, allowed)
 			}
 		}
+		if v, ok := c["value"].(string); ok && !isUnknownMarker(v) {
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("condition value must not be empty or whitespace")
+			}
+			if ct == 4 {
+				if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 5 {
+					return fmt.Errorf("condition type 4 (trigger severity) requires a value 0-5, got %q", v)
+				}
+			}
+		}
 		if ct == 26 && v2 == "" {
 			return fmt.Errorf("condition type 26 (event tag value) requires value2 (the tag name)")
 		}
@@ -245,6 +257,52 @@ func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ in
 		if !planKnown(d, p+"user_groups", p+"users", p+"default_msg", p+"subject", p+"message", p+"esc_step_from", p+"esc_step_to") {
 			continue
 		}
+		if len(setStrings(op["user_groups"]))+len(setStrings(op["users"])) == 0 {
+			return fmt.Errorf("operation.%d: at least one recipient in user_groups or users is required", i)
+		}
+		if op["default_msg"].(bool) && (op["subject"].(string) != "" || op["message"].(string) != "") {
+			return fmt.Errorf("operation.%d: subject/message require default_msg = false", i)
+		}
+		from, to := op["esc_step_from"].(int), op["esc_step_to"].(int)
+		if to != 0 && to < from {
+			return fmt.Errorf("operation.%d: esc_step_to (%d) must be 0 or >= esc_step_from (%d)", i, to, from)
+		}
+	}
+	return nil
+}
+
+// validateActionValues re-runs the plan-time cross-checks on RESOLVED values:
+// CustomizeDiff must skip unknown references, so Create and Update validate
+// the final data again before mutating (e.g. a default_msg that resolved to
+// true next to a static subject must fail, not silently drop the subject).
+func validateActionValues(d *schema.ResourceData) error {
+	for _, raw := range d.Get("condition").(*schema.Set).List() {
+		c := raw.(map[string]interface{})
+		ct := c["conditiontype"].(int)
+		v := c["value"].(string)
+		v2 := c["value2"].(string)
+		if op, ok := c["operator"].(int); ok {
+			if allowed, known := conditionOperators[ct]; known && !intIn(op, allowed) {
+				return fmt.Errorf("operator %d is not valid for condition type %d (allowed: %v)", op, ct, allowed)
+			}
+		}
+		if strings.TrimSpace(v) == "" {
+			return fmt.Errorf("condition value must not be empty or whitespace")
+		}
+		if ct == 4 {
+			if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 5 {
+				return fmt.Errorf("condition type 4 (trigger severity) requires a value 0-5, got %q", v)
+			}
+		}
+		if ct == 26 && v2 == "" {
+			return fmt.Errorf("condition type 26 (event tag value) requires value2 (the tag name)")
+		}
+		if ct != 26 && v2 != "" {
+			return fmt.Errorf("value2 is only supported for condition type 26 (event tag value)")
+		}
+	}
+	for i, raw := range d.Get("operation").([]interface{}) {
+		op := raw.(map[string]interface{})
 		if len(setStrings(op["user_groups"]))+len(setStrings(op["users"])) == 0 {
 			return fmt.Errorf("operation.%d: at least one recipient in user_groups or users is required", i)
 		}
@@ -430,9 +488,12 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 func resourceActionCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	if err := validateActionValues(d); err != nil {
+		return diag.FromErr(err)
+	}
 	id, err := client.CreateAction(ctx, expandAction(d))
 	if err != nil {
-		return diag.Errorf("creating action: %s", err)
+		return createError("action", d.Get("name").(string), err)
 	}
 	d.SetId(id)
 	return readAfterCreate(ctx, d, m, resourceActionRead, "action")
@@ -458,6 +519,27 @@ func resourceActionRead(ctx context.Context, d *schema.ResourceData, m interface
 func resourceActionUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	if err := validateActionValues(d); err != nil {
+		return diag.FromErr(err)
+	}
+	// action.update replaces the filter and operations wholesale: shapes added
+	// outside Terraform since the last refresh (recovery/update operations,
+	// operation conditions) would be dropped silently - refuse instead.
+	current, err := client.GetAction(ctx, d.Id())
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return diag.Errorf("action %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to refresh and recreate it", d.Id())
+		}
+		return diag.Errorf("reading action %s: %s", d.Id(), err)
+	}
+	if len(current.RecoveryOperations) != 0 || len(current.UpdateOperations) != 0 {
+		return diag.Errorf("action %s gained recovery or update operations outside Terraform; updating would drop them - %s", d.Id(), unmanageableHint)
+	}
+	for _, op := range current.Operations {
+		if len(op.OpConditions) != 0 {
+			return diag.Errorf("action %s gained operation conditions outside Terraform; updating would drop them - %s", d.Id(), unmanageableHint)
+		}
+	}
 	// SDKv2 writes the planned values into state even when Update fails (see
 	// ResourceData.Partial); partial mode preserves the previous state until
 	// the mutation is confirmed, then the final Read refreshes everything.

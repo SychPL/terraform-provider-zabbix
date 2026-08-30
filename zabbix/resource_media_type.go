@@ -350,6 +350,67 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 	return nil
 }
 
+// validateMediaTypeValues re-runs the plan-time requirements on RESOLVED
+// values (CustomizeDiff must skip unknown references): required fields per
+// type, credential pairing (an smtp_authentication that resolved to 0 next to
+// configured credentials must fail, not silently drop the password), webhook
+// timeout/event menu and SMS max_sessions.
+func validateMediaTypeValues(d *schema.ResourceData) error {
+	t := d.Get("type").(int)
+	require := func(field string) error {
+		if d.Get(field).(string) == "" {
+			return fmt.Errorf("%s is required for media type %d", field, t)
+		}
+		return nil
+	}
+	if secs, err := parseZabbixDuration(d.Get("attempt_interval").(string)); err != nil || secs < 0 || secs > 3600 {
+		return fmt.Errorf("attempt_interval must be a duration between 0 and 1h (e.g. 10s, 1m), got %q", d.Get("attempt_interval"))
+	}
+	if t == mediaTypeSMS && d.Get("max_sessions").(int) != 1 {
+		return fmt.Errorf("max_sessions must be 1 for SMS media types")
+	}
+	switch t {
+	case mediaTypeEmail:
+		for _, f := range []string{"smtp_server", "smtp_helo", "smtp_email"} {
+			if err := require(f); err != nil {
+				return err
+			}
+		}
+		if d.Get("smtp_authentication").(int) == 0 {
+			for _, f := range []string{"username", "password"} {
+				if d.Get(f).(string) != "" {
+					return fmt.Errorf("username/password require smtp_authentication = 1")
+				}
+			}
+		} else {
+			for _, f := range []string{"username", "password"} {
+				if err := require(f); err != nil {
+					return err
+				}
+			}
+		}
+	case mediaTypeScript:
+		return require("exec_path")
+	case mediaTypeSMS:
+		return require("gsm_modem")
+	case mediaTypeWebhook:
+		if err := require("script"); err != nil {
+			return err
+		}
+		if d.Get("show_event_menu").(bool) {
+			for _, f := range []string{"event_menu_url", "event_menu_name"} {
+				if err := require(f); err != nil {
+					return err
+				}
+			}
+		}
+		if secs, err := parseZabbixDuration(d.Get("timeout").(string)); err != nil || secs < 1 || secs > 60 {
+			return fmt.Errorf("timeout must be between 1s and 60s")
+		}
+	}
+	return nil
+}
+
 func expandMediaType(d *schema.ResourceData) *MediaType {
 	mt := &MediaType{
 		Name:               d.Get("name").(string),
@@ -390,9 +451,12 @@ func expandMediaType(d *schema.ResourceData) *MediaType {
 func resourceMediaTypeCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	if err := validateMediaTypeValues(d); err != nil {
+		return diag.FromErr(err)
+	}
 	id, err := client.CreateMediaType(ctx, expandMediaType(d))
 	if err != nil {
-		return diag.Errorf("creating media type: %s", err)
+		return createError("media type", d.Get("name").(string), err)
 	}
 	d.SetId(id)
 	return readAfterCreate(ctx, d, m, resourceMediaTypeRead, "media type")
@@ -516,6 +580,9 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	if err := validateMediaTypeValues(d); err != nil {
+		return diag.FromErr(err)
+	}
 	// SDKv2 writes the planned values into state even when Update fails (see
 	// ResourceData.Partial); partial mode preserves the previous state until
 	// the mutation is confirmed, then the final Read refreshes everything.

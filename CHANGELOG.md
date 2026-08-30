@@ -57,6 +57,19 @@
   6.4.19) is a hard error instead of silently zeroing the configuration.
 - An explicit `password` next to an explicit `api_token` is a conflict even
   when `username` comes from the environment.
+- Plan-time validation: action condition values must be non-empty (severity
+  0-5), host `dns` is validated (user macros allowed); updating a host that
+  was deleted externally reports a clear error.
+- Cross-field rules are re-validated on resolved values at apply time (plan
+  validation must skip unknown references): host address, action operations
+  and media type per-type requirements fail instead of silently degrading.
+- Updating an action refuses to overwrite recovery/update operations or
+  operation conditions added outside Terraform since the last refresh.
+- A create that fails with a transport error reports the unknown outcome and
+  suggests an import check instead of inviting a duplicating retry.
+- Release workflow: read-only ancestry preflight runs before CI and before
+  the release-environment approval; write permission is limited to the
+  signing job.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 

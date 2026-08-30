@@ -2,9 +2,14 @@ package zabbix
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
@@ -362,6 +367,7 @@ resource "zabbix_media_type" "wh" {
 %s}`, n, params)
 	}
 	twoParams := `
+  max_sessions     = 0
   max_attempts     = 5
   attempt_interval = "30s"
   process_tags     = true
@@ -394,6 +400,7 @@ resource "zabbix_media_type" "wh" {
 			{Config: cfg(name, twoParams), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_media_type.wh", "parameter.#", "2"),
 				resource.TestCheckResourceAttr("zabbix_media_type.wh", "max_attempts", "5"),
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "max_sessions", "0"),
 				resource.TestCheckResourceAttr("zabbix_media_type.wh", "process_tags", "true"),
 				resource.TestCheckResourceAttr("zabbix_media_type.wh", "show_event_menu", "true"),
 				resource.TestCheckResourceAttr("zabbix_media_type.wh", "event_menu_name", "Details"),
@@ -628,6 +635,51 @@ resource "zabbix_action" "act" {
 			{ResourceName: "zabbix_action.act", ImportState: true, ImportStateVerify: true},
 		},
 	})
+}
+
+// TestAccProvider_TLSTerminatedProxy drives the real TLS client path
+// (ca_cert_file -> RootCAs -> handshake) through a TLS-terminating reverse
+// proxy in front of the real Zabbix API.
+func TestAccProvider_TLSTerminatedProxy(t *testing.T) {
+	testAccPreCheck(t)
+	backend, err := url.Parse(os.Getenv("ZABBIX_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewUnstartedServer(httputil.NewSingleHostReverseProxy(backend))
+	proxy.StartTLS()
+	t.Cleanup(proxy.Close)
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: proxy.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewZabbixClient(ClientConfig{
+		URL:        proxy.URL + backend.Path,
+		Username:   os.Getenv("ZABBIX_USERNAME"),
+		Password:   os.Getenv("ZABBIX_PASSWORD"),
+		APIToken:   os.Getenv("ZABBIX_API_TOKEN"),
+		CACertFile: caPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := c.GetVersion(ctx); err != nil {
+		t.Fatalf("apiinfo.version over TLS: %v", err)
+	}
+	if err := c.Login(ctx); err != nil {
+		t.Fatalf("login over TLS: %v", err)
+	}
+
+	// Without the CA file the self-signed proxy must be rejected.
+	plain, err := NewZabbixClient(ClientConfig{URL: proxy.URL + backend.Path, APIToken: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plain.GetVersion(ctx); err == nil {
+		t.Fatal("a self-signed certificate must be rejected without ca_cert_file")
+	}
 }
 
 // --- provider: API token authentication ---

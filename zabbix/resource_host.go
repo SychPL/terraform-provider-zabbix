@@ -2,8 +2,10 @@ package zabbix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -78,10 +80,11 @@ func resourceHost() *schema.Resource {
 				Description:  "IP address of the main agent interface (or a user macro). Leave both `ip` and `dns` empty to create the host without any interface (e.g. for trapper or dependent items only).",
 			},
 			"dns": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "DNS name of the main agent interface. Required when `use_ip` is false.",
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "",
+				ValidateFunc: validateDNS,
+				Description:  "DNS name of the main agent interface (or a user macro). Required when `use_ip` is false.",
 			},
 			"port": {
 				Type:         schema.TypeString,
@@ -105,26 +108,47 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 			}
 		}
 	}
-	if !planKnown(d, "use_ip", "ip", "dns") {
-		return nil
+	if !planKnown(d, "use_ip", "ip", "dns", "port") {
+		return nil // values with unknown references are re-validated in Create/Update
 	}
-	ip, dns := d.Get("ip").(string), d.Get("dns").(string)
+	return validateHostAddress(d.GetRawConfig(), d.Get)
+}
+
+// validateHostAddress checks the interface address cross-rules. CustomizeDiff
+// must skip unknown values (references to other resources), so Create and
+// Update run the same checks again on the RESOLVED values; an address that
+// was written in the configuration but resolved to an empty string is
+// rejected instead of silently producing an agentless host.
+func validateHostAddress(raw cty.Value, get func(string) interface{}) error {
+	if !raw.IsNull() {
+		for _, f := range []string{"ip", "dns"} {
+			if v := raw.GetAttr(f); !v.IsNull() && v.IsKnown() {
+				if s, _ := get(f).(string); s == "" {
+					return fmt.Errorf("%s was configured but is empty; omit it to create the host without an agent interface", f)
+				}
+			}
+		}
+	}
+	ip, _ := get("ip").(string)
+	dns, _ := get("dns").(string)
+	useIP, _ := get("use_ip").(bool)
+	port, _ := get("port").(string)
 	if ip == "" && dns == "" {
 		// No agent interface at all - valid for hosts monitored through
 		// trapper/dependent items - but then DNS mode makes no sense and a
 		// custom port would never be applied (perpetual diff).
-		if !d.Get("use_ip").(bool) {
+		if !useIP {
 			return fmt.Errorf("dns is required when use_ip is false")
 		}
-		if planKnown(d, "port") && d.Get("port").(string) != defaultAgentPort {
+		if port != defaultAgentPort {
 			return fmt.Errorf("port requires ip or dns (the host has no agent interface)")
 		}
 		return nil
 	}
-	if d.Get("use_ip").(bool) && ip == "" {
+	if useIP && ip == "" {
 		return fmt.Errorf("ip is required when use_ip is true (or set use_ip = false to connect via dns)")
 	}
-	if !d.Get("use_ip").(bool) && dns == "" {
+	if !useIP && dns == "" {
 		return fmt.Errorf("dns is required when use_ip is false")
 	}
 	return nil
@@ -154,9 +178,12 @@ func expandHost(d *schema.ResourceData) *HostSpec {
 func resourceHostCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	if err := validateHostAddress(d.GetRawConfig(), d.Get); err != nil {
+		return diag.FromErr(err)
+	}
 	id, err := client.CreateHost(ctx, expandHost(d))
 	if err != nil {
-		return diag.Errorf("creating host: %s", err)
+		return createError("host", d.Get("host").(string), err)
 	}
 	d.SetId(id)
 	return readAfterCreate(ctx, d, m, resourceHostRead, "host")
@@ -214,8 +241,14 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	if err := validateHostAddress(d.GetRawConfig(), d.Get); err != nil {
+		return diag.FromErr(err)
+	}
 	host, err := client.GetHost(ctx, d.Id())
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return diag.Errorf("host %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to refresh and recreate it", d.Id())
+		}
 		return diag.Errorf("reading host %s: %s", d.Id(), err)
 	}
 

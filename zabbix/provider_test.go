@@ -77,6 +77,7 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"query in url", map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php?sid=s3cret-pw", "api_token": "t"}, "query string", ""},
 		{"tls_insecure with ca_cert_file", map[string]interface{}{"url": s.URL, "api_token": "t", "tls_insecure": true, "ca_cert_file": "ca.pem"}, "mutually exclusive", ""},
 		{"both auth methods explicit", map[string]interface{}{"url": s.URL, "api_token": "t", "username": "u", "password": "p"}, "api_token and username/password are mutually exclusive", ""},
+		{"token with stray password", map[string]interface{}{"url": s.URL, "api_token": "t", "password": "p"}, "mutually exclusive", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
 		// The plain-HTTP warning must come from providerConfigure itself and
 		// must survive a failing configure (DNS error on the .invalid TLD).
@@ -531,6 +532,12 @@ func TestHostCustomizeDiff(t *testing.T) {
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups}); err != nil {
 		t.Errorf("a host without any interface must plan (trapper/dependent items only), got %v", err)
 	}
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "use_ip": false, "dns": "bad name"}); err == nil || !strings.Contains(err.Error(), "not a valid DNS name") {
+		t.Errorf("a DNS name with whitespace must fail at plan time, got %v", err)
+	}
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "use_ip": false, "dns": "{$AGENT.DNS}"}); err != nil {
+		t.Errorf("a user macro must be a valid dns, got %v", err)
+	}
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "dns": "x.local"}); err == nil || !strings.Contains(err.Error(), "ip is required") {
 		t.Errorf("dns with use_ip=true must ask for ip or use_ip=false, got %v", err)
 	}
@@ -622,6 +629,8 @@ func TestActionCustomizeDiff(t *testing.T) {
 		{"tag type without value2", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "value": "prod"}}}, "requires value2"},
 		{"tag type ok", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "operator": 2, "value": "prod", "value2": "env"}}}, ""},
 		{"event name with equals operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 3, "value": "disk"}}}, "operator 0 is not valid for condition type 3"},
+		{"empty condition value", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 0, "value": "   "}}}, "must not be empty"},
+		{"severity out of range", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 4, "operator": 5, "value": "9"}}}, "value 0-5"},
 		{"time period with in operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 6, "operator": 4, "value": "1-7,00:00-24:00"}}}, ""},
 		{"severity with contains operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 4, "operator": 2, "value": "4"}}}, "operator 2 is not valid for condition type 4"},
 		{"removed condition type 16", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 16, "operator": 10, "value": ""}}}, "expected condition.0.conditiontype to be one of"},

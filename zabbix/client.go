@@ -834,7 +834,18 @@ func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType,
 	if err := json.Unmarshal(raw[0], &probe); err != nil {
 		return nil, fmt.Errorf("failed to parse result: %w", err)
 	}
-	if _, ok := probe["smtp_server"]; !ok {
+	// Any of these type-independent fields marks a full response; a server
+	// that ever omits fields foreign to the media type's transport still
+	// returns description/maxsessions, so a full read is never mistaken for
+	// a restricted one (which carries none of the three).
+	full := false
+	for _, f := range []string{"smtp_server", "description", "maxsessions"} {
+		if _, ok := probe[f]; ok {
+			full = true
+			break
+		}
+	}
+	if !full {
 		return nil, fmt.Errorf("mediatype.get returned a restricted field set; managing media types requires a Super Admin role (since Zabbix 6.4.19 other roles cannot read media type details)")
 	}
 	var mt MediaType

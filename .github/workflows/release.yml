@@ -5,17 +5,40 @@ on:
     tags:
       - 'v*'
 
+# Least privilege: only the signing job may write releases. Note that GitHub
+# always executes the workflow file from the pushed tag's commit - the trust
+# boundary is the protected `release` environment (required reviewers and
+# environment-scoped secrets, see README "Release"), plus the read-only
+# preflight ancestry check below.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  preflight:
+    # Runs before CI and before anyone is asked to approve the release
+    # environment: a tag that does not point into main fails fast here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - name: Tag must point to a commit on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::tag $GITHUB_REF_NAME is not reachable from main"; exit 1; }
+
   ci:
     # Full gate: lint, unit, docs drift and acceptance tests against Zabbix 6.4.
+    needs: preflight
     uses: ./.github/workflows/ci.yml
 
   goreleaser:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     needs: ci
     # Protect this environment in the repository settings (required reviewers)
     # to require an approval before the signing key is used.

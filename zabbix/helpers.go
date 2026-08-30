@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -192,6 +193,19 @@ func validateIP(v interface{}, k string) ([]string, []error) {
 	return nil, []error{fmt.Errorf("%s: %q is not a valid IP address or user macro", k, s)}
 }
 
+// validateDNS accepts an empty value, a user macro or a DNS name (no
+// whitespace, at most 255 characters); typos fail the plan, not the apply.
+func validateDNS(v interface{}, k string) ([]string, []error) {
+	s := v.(string)
+	if s == "" || userMacroRe.MatchString(s) {
+		return nil, nil
+	}
+	if len(s) > 255 || strings.ContainsAny(s, " \t") {
+		return nil, []error{fmt.Errorf("%s: %q is not a valid DNS name or user macro", k, s)}
+	}
+	return nil, nil
+}
+
 // validatePort accepts a port number 1-65535 or a user macro.
 func validatePort(v interface{}, k string) ([]string, []error) {
 	s := v.(string)
@@ -203,6 +217,18 @@ func validatePort(v interface{}, k string) ([]string, []error) {
 		return nil, []error{fmt.Errorf("%s: must be a port number 1-65535 or a user macro, got %q", k, s)}
 	}
 	return nil, nil
+}
+
+// createError classifies a failed create. A JSON-RPC error is definitive (the
+// API rejected the request); anything else (transport error, timeout) leaves
+// the outcome unknown - the request may still have executed, so the operator
+// gets an import hint instead of an error that invites a duplicating retry.
+func createError(kind, name string, err error) diag.Diagnostics {
+	var rpcErr *JsonRpcError
+	if errors.As(err, &rpcErr) {
+		return diag.Errorf("creating %s: %s", kind, err)
+	}
+	return diag.Errorf("creating %s: %s; the outcome is unknown - if the request reached Zabbix, %q may exist without being tracked: check and import it before re-applying", kind, err, name)
 }
 
 // readAfterCreate runs the first Read after a successful create. An empty

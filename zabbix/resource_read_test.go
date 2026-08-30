@@ -446,6 +446,107 @@ func TestActionParams_CustomSubjectAlwaysSent(t *testing.T) {
 	}
 }
 
+func TestHostApplyValidation_RejectsInvalidResolvedValues(t *testing.T) {
+	// CustomizeDiff skips unknown references; the same cross-checks must run
+	// again on the resolved values before any mutation.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		t.Errorf("no API call expected, got %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceHost()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "use_ip": false})
+	if diags := r.CreateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "dns is required") {
+		t.Fatalf("an invalid resolved address must fail before create, got %v", diags)
+	}
+	d = schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "use_ip": false})
+	d.SetId("1")
+	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "dns is required") {
+		t.Fatalf("an invalid resolved address must fail before update, got %v", diags)
+	}
+}
+
+func TestActionApplyValidation_RejectsResolvedConflicts(t *testing.T) {
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		t.Errorf("no API call expected, got %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceAction()
+	raw := map[string]interface{}{"name": "a",
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}, "default_msg": true, "subject": "S"}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, raw), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "default_msg = false") {
+		t.Fatalf("a default_msg that resolved to true next to a subject must fail before create, got %v", diags)
+	}
+	d := schema.TestResourceDataRaw(t, r.Schema, raw)
+	d.SetId("10")
+	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "default_msg = false") {
+		t.Fatalf("the same conflict must fail before update, got %v", diags)
+	}
+}
+
+func TestActionUpdate_RefusesExternalUnmanagedShapes(t *testing.T) {
+	// Shapes added outside Terraform since the last refresh must not be
+	// silently dropped by the wholesale action.update.
+	base := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
+	fixture := strings.Replace(base, `"operations":[`, `"recovery_operations":[{"operationid":"99"}],"operations":[`, 1)
+	c := fixtureServer(t, "action.get", fixture)
+	d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{
+		"name": "a", "operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}})
+	d.SetId("10")
+	diags := resourceAction().UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "recovery or update operations") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+		t.Fatalf("external recovery operations must refuse the update, got %v", diags)
+	}
+}
+
+func TestMediaTypeApplyValidation_RejectsResolvedConflicts(t *testing.T) {
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		t.Errorf("no API call expected, got %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceMediaType()
+	// smtp_authentication resolved to 0 while credentials are configured: the
+	// password must not be silently dropped from the SMTP configuration.
+	raw := map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e",
+		"smtp_authentication": 0, "username": "u", "password": "p"}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, raw), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "smtp_authentication = 1") {
+		t.Fatalf("credentials with resolved smtp_authentication=0 must fail before create, got %v", diags)
+	}
+	d := schema.TestResourceDataRaw(t, r.Schema, raw)
+	d.SetId("45")
+	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "smtp_authentication = 1") {
+		t.Fatalf("the same conflict must fail before update, got %v", diags)
+	}
+}
+
+func TestHostGroupCreate_AmbiguousOutcomeHint(t *testing.T) {
+	// A transport failure leaves the create outcome unknown: the diagnostics
+	// must warn that the object may exist and suggest an import.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) { return nil, nil })
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	s.Close()
+	d := schema.TestResourceDataRaw(t, resourceHostGroup().Schema, map[string]interface{}{"name": "g"})
+	diags := resourceHostGroup().CreateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "outcome is unknown") {
+		t.Fatalf("a transport failure during create must carry the import hint, got %v", diags)
+	}
+}
+
+func TestHostUpdate_VanishedHost(t *testing.T) {
+	// The host was deleted externally between plan and apply: the error must
+	// say so instead of a bare "object not found", and the ID must survive so
+	// the next refresh clears the state and recreates the host.
+	c := fixtureServer(t, "host.get", `[]`)
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	d.SetId("1")
+	diags := resourceHost().UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "deleted externally") || d.Id() != "1" {
+		t.Fatalf("a vanished host must produce a clear error and keep the ID, got %v id=%q", diags, d.Id())
+	}
+}
+
 func TestHostResource_DeleteIdempotent(t *testing.T) {
 	var gone bool
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
