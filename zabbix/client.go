@@ -93,18 +93,26 @@ type HostInterface struct {
 }
 
 type MediaType struct {
-	MediaTypeID string           `json:"mediatypeid,omitempty"`
-	Name        string           `json:"name"`
-	Type        string           `json:"type"` // "0" = Email, "1" = Script, "2" = SMS, "4" = Webhook
-	Status      string           `json:"status"` // "0" = enabled, "1" = disabled
-	SMTPServer  string           `json:"smtp_server,omitempty"`
-	SMTPHelo    string           `json:"smtp_helo,omitempty"`
-	SMTPEmail   string           `json:"smtp_email,omitempty"`
-	ExecPath    string           `json:"exec_path,omitempty"`
-	GSMModem    string           `json:"gsm_modem,omitempty"`
-	Script      string           `json:"script,omitempty"`
-	Timeout     string           `json:"timeout,omitempty"`
-	Parameters  []MediaTypeParam `json:"parameters,omitempty"`
+	MediaTypeID        string           `json:"mediatypeid,omitempty"`
+	Name               string           `json:"name"`
+	Type               string           `json:"type"`   // "0" = Email, "1" = Script, "2" = SMS, "4" = Webhook
+	Status             string           `json:"status"` // "0" = enabled, "1" = disabled
+	SMTPServer         string           `json:"smtp_server,omitempty"`
+	SMTPPort           string           `json:"smtp_port,omitempty"`
+	SMTPHelo           string           `json:"smtp_helo,omitempty"`
+	SMTPEmail          string           `json:"smtp_email,omitempty"`
+	SMTPSecurity       string           `json:"smtp_security,omitempty"`
+	SMTPVerifyPeer     string           `json:"smtp_verify_peer,omitempty"`
+	SMTPVerifyHost     string           `json:"smtp_verify_host,omitempty"`
+	SMTPAuthentication string           `json:"smtp_authentication,omitempty"`
+	Username           string           `json:"username,omitempty"`
+	Passwd             string           `json:"passwd,omitempty"`
+	ExecPath           string           `json:"exec_path,omitempty"`
+	GSMModem           string           `json:"gsm_modem,omitempty"`
+	Script             string           `json:"script,omitempty"`
+	Timeout            string           `json:"timeout,omitempty"`
+	Parameters         []MediaTypeParam `json:"parameters,omitempty"`
+	ClearParameters    bool             `json:"-"`
 }
 
 type MediaTypeParam struct {
@@ -192,6 +200,10 @@ func NewZabbixClient(url, username, password, apiToken string, tlsInsecure bool,
 	}
 
 	return client, nil
+}
+
+func (c *ZabbixClient) TLSConfig() *tls.Config {
+	return c.HTTPClient.Transport.(*http.Transport).TLSClientConfig
 }
 
 func (c *ZabbixClient) prepareRequest(ctx context.Context, method string, reqBytes []byte) (*http.Request, error) {
@@ -400,21 +412,23 @@ func (c *ZabbixClient) CreateHost(ctx context.Context, name string, groupIds []s
 		templates[i] = TemplateRef{TemplateID: id}
 	}
 
-	interfaces := []HostInterface{
-		{
-			Type:  "1", // Agent
-			Main:  "1", // Default interface
-			UseIP: useIP,
-			IP:    ip,
-			DNS:   dns,
-			Port:  port,
-		},
+	params := map[string]interface{}{
+		"host":   name,
+		"groups": groups,
 	}
 
-	params := map[string]interface{}{
-		"host":       name,
-		"groups":     groups,
-		"interfaces": interfaces,
+	if ip != "" || dns != "" {
+		interfaces := []HostInterface{
+			{
+				Type:  "1", // Agent
+				Main:  "1", // Default interface
+				UseIP: useIP,
+				IP:    ip,
+				DNS:   dns,
+				Port:  port,
+			},
+		}
+		params["interfaces"] = interfaces
 	}
 
 	if len(templates) > 0 {
@@ -510,6 +524,26 @@ func (c *ZabbixClient) GetHostInterface(ctx context.Context, hostID string) (*Ho
 	return nil, ErrNotFound
 }
 
+func (c *ZabbixClient) CreateHostInterface(ctx context.Context, hostID string, useIP, ip, dns, port string) error {
+	params := map[string]interface{}{
+		"hostid": hostID,
+		"type":   "1",
+		"main":   "1",
+		"useip":  useIP,
+		"ip":     ip,
+		"dns":    dns,
+		"port":   port,
+	}
+	var res map[string][]string
+	return c.Call(ctx, "hostinterface.create", params, &res)
+}
+
+func (c *ZabbixClient) DeleteHostInterface(ctx context.Context, id string) error {
+	params := []string{id}
+	var res map[string][]string
+	return c.Call(ctx, "hostinterface.delete", params, &res)
+}
+
 func (c *ZabbixClient) UpdateHostInterface(ctx context.Context, inter *HostInterface) error {
 	var res map[string][]string
 	return c.Call(ctx, "hostinterface.update", inter, &res)
@@ -532,40 +566,61 @@ func (c *ZabbixClient) GetVersion(ctx context.Context) (string, error) {
 
 // --- MEDIA TYPE CRUD ---
 
-func (c *ZabbixClient) CreateMediaType(ctx context.Context, mediaType *MediaType) (string, error) {
+func mediaTypeParams(mt *MediaType) map[string]interface{} {
 	params := map[string]interface{}{
-		"name":   mediaType.Name,
-		"type":   mediaType.Type,
-		"status": mediaType.Status,
+		"name":                mt.Name,
+		"type":                mt.Type,
+		"status":              mt.Status,
+		"smtp_server":         "",
+		"smtp_port":           "25",
+		"smtp_helo":           "",
+		"smtp_email":          "",
+		"smtp_security":       "0",
+		"smtp_verify_peer":    "0",
+		"smtp_verify_host":    "0",
+		"smtp_authentication": "0",
+		"username":            "",
+		"passwd":              "",
+		"exec_path":           "",
+		"gsm_modem":           "",
+		"script":              "",
+		"timeout":             "30s",
+		"parameters":          []MediaTypeParam{},
 	}
+	switch mt.Type {
+	case "0": // Email
+		params["smtp_server"] = mt.SMTPServer
+		params["smtp_port"] = mt.SMTPPort
+		params["smtp_helo"] = mt.SMTPHelo
+		params["smtp_email"] = mt.SMTPEmail
+		params["smtp_security"] = mt.SMTPSecurity
+		params["smtp_verify_peer"] = mt.SMTPVerifyPeer
+		params["smtp_verify_host"] = mt.SMTPVerifyHost
+		params["smtp_authentication"] = mt.SMTPAuthentication
+		if mt.SMTPAuthentication == "1" {
+			params["username"] = mt.Username
+			params["passwd"] = mt.Passwd
+		}
+	case "1": // Script
+		params["exec_path"] = mt.ExecPath
+		if !mt.ClearParameters {
+			delete(params, "parameters") // sortorder/value parameters are left untouched
+		}
+	case "2": // SMS
+		params["gsm_modem"] = mt.GSMModem
+	case "4": // Webhook
+		params["script"] = mt.Script
+		params["timeout"] = mt.Timeout
+		if mt.Parameters != nil {
+			params["parameters"] = mt.Parameters
+		}
+	}
+	return params
+}
 
-	if mediaType.SMTPServer != "" {
-		params["smtp_server"] = mediaType.SMTPServer
-	}
-	if mediaType.SMTPHelo != "" {
-		params["smtp_helo"] = mediaType.SMTPHelo
-	}
-	if mediaType.SMTPEmail != "" {
-		params["smtp_email"] = mediaType.SMTPEmail
-	}
-	if mediaType.ExecPath != "" {
-		params["exec_path"] = mediaType.ExecPath
-	}
-	if mediaType.GSMModem != "" {
-		params["gsm_modem"] = mediaType.GSMModem
-	}
-	if mediaType.Script != "" {
-		params["script"] = mediaType.Script
-	}
-	if mediaType.Timeout != "" {
-		params["timeout"] = mediaType.Timeout
-	}
-	if len(mediaType.Parameters) > 0 {
-		params["parameters"] = mediaType.Parameters
-	}
-
+func (c *ZabbixClient) CreateMediaType(ctx context.Context, mediaType *MediaType) (string, error) {
 	var res map[string][]string
-	err := c.Call(ctx, "mediatype.create", params, &res)
+	err := c.Call(ctx, "mediatype.create", mediaTypeParams(mediaType), &res)
 	if err != nil {
 		return "", err
 	}
@@ -581,7 +636,7 @@ func (c *ZabbixClient) CreateMediaType(ctx context.Context, mediaType *MediaType
 func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType, error) {
 	params := map[string]interface{}{
 		"mediatypeids":     []string{id},
-		"output":           []string{"mediatypeid", "name", "type", "status", "smtp_server", "smtp_helo", "smtp_email", "exec_path", "gsm_modem", "script", "timeout"},
+		"output":           []string{"mediatypeid", "name", "type", "status", "smtp_server", "smtp_helo", "smtp_email", "exec_path", "gsm_modem", "script", "timeout", "smtp_port", "smtp_security", "smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "passwd"},
 		"selectParameters": "extend",
 	}
 
@@ -599,39 +654,8 @@ func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType,
 }
 
 func (c *ZabbixClient) UpdateMediaType(ctx context.Context, mediaType *MediaType) error {
-	params := map[string]interface{}{
-		"mediatypeid": mediaType.MediaTypeID,
-		"name":        mediaType.Name,
-		"type":        mediaType.Type,
-		"status":      mediaType.Status,
-	}
-
-	if mediaType.SMTPServer != "" {
-		params["smtp_server"] = mediaType.SMTPServer
-	}
-	if mediaType.SMTPHelo != "" {
-		params["smtp_helo"] = mediaType.SMTPHelo
-	}
-	if mediaType.SMTPEmail != "" {
-		params["smtp_email"] = mediaType.SMTPEmail
-	}
-	if mediaType.ExecPath != "" {
-		params["exec_path"] = mediaType.ExecPath
-	}
-	if mediaType.GSMModem != "" {
-		params["gsm_modem"] = mediaType.GSMModem
-	}
-	if mediaType.Script != "" {
-		params["script"] = mediaType.Script
-	}
-	if mediaType.Timeout != "" {
-		params["timeout"] = mediaType.Timeout
-	}
-	if mediaType.Type == "4" {
-		params["parameters"] = mediaType.Parameters
-	} else {
-		params["parameters"] = []interface{}{}
-	}
+	params := mediaTypeParams(mediaType)
+	params["mediatypeid"] = mediaType.MediaTypeID
 
 	var res map[string][]string
 	return c.Call(ctx, "mediatype.update", params, &res)

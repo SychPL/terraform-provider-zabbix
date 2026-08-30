@@ -74,11 +74,15 @@ func resourceHostCreate(ctx context.Context, d *schema.ResourceData, m interface
 	dns := d.Get("dns").(string)
 	port := d.Get("port").(string)
 
-	if useIPVal && ip == "" {
-		return diag.Errorf("ip must be specified when use_ip is true")
-	}
-	if !useIPVal && dns == "" {
-		return diag.Errorf("dns must be specified when use_ip is false")
+	if ip == "" && dns == "" {
+		// No interface requested, bypass validation
+	} else {
+		if useIPVal && ip == "" {
+			return diag.Errorf("ip must be specified when use_ip is true")
+		}
+		if !useIPVal && dns == "" {
+			return diag.Errorf("dns must be specified when use_ip is false")
+		}
 	}
 
 	hostID, err := client.CreateHost(ctx, host, groups, templates, useIP, ip, dns, port)
@@ -135,6 +139,9 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 		d.Set("ip", mainInter.IP)
 		d.Set("dns", mainInter.DNS)
 		d.Set("port", mainInter.Port)
+	} else {
+		d.Set("ip", "")
+		d.Set("dns", "")
 	}
 
 	return nil
@@ -174,11 +181,6 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 	}
 
 	if d.HasChanges("use_ip", "ip", "dns", "port") {
-		inter, err := client.GetHostInterface(ctx, id)
-		if err != nil {
-			return diag.Errorf("failed to retrieve host interface for update: %s", err)
-		}
-
 		useIPVal := d.Get("use_ip").(bool)
 		useIP := "1"
 		if !useIPVal {
@@ -188,20 +190,44 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 		dns := d.Get("dns").(string)
 		port := d.Get("port").(string)
 
-		if useIPVal && ip == "" {
-			return diag.Errorf("ip must be specified when use_ip is true")
-		}
-		if !useIPVal && dns == "" {
-			return diag.Errorf("dns must be specified when use_ip is false")
+		inter, err := client.GetHostInterface(ctx, id)
+		if err != nil && err != ErrNotFound {
+			return diag.Errorf("failed to retrieve host interface: %s", err)
 		}
 
-		inter.UseIP = useIP
-		inter.IP = ip
-		inter.DNS = dns
-		inter.Port = port
+		if ip == "" && dns == "" {
+			// User wants no interface
+			if err == nil {
+				// Interface exists, delete it
+				if err := client.DeleteHostInterface(ctx, inter.InterfaceID); err != nil {
+					return diag.Errorf("failed to delete host interface: %s", err)
+				}
+			}
+		} else {
+			// User wants an interface
+			if useIPVal && ip == "" {
+				return diag.Errorf("ip must be specified when use_ip is true")
+			}
+			if !useIPVal && dns == "" {
+				return diag.Errorf("dns must be specified when use_ip is false")
+			}
 
-		if err := client.UpdateHostInterface(ctx, inter); err != nil {
-			return diag.Errorf("failed to update host interface: %s", err)
+			if err == ErrNotFound {
+				// Interface does not exist, create it
+				if err := client.CreateHostInterface(ctx, id, useIP, ip, dns, port); err != nil {
+					return diag.Errorf("failed to create host interface: %s", err)
+				}
+			} else {
+				// Interface exists, update it
+				inter.UseIP = useIP
+				inter.IP = ip
+				inter.DNS = dns
+				inter.Port = port
+
+				if err := client.UpdateHostInterface(ctx, inter); err != nil {
+					return diag.Errorf("failed to update host interface: %s", err)
+				}
+			}
 		}
 	}
 
