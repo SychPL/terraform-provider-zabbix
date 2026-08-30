@@ -67,8 +67,8 @@ resource "zabbix_action" "alert_action" {
   evaltype    = 0 # AND/OR
 
   condition {
-    conditiontype = 0  # Host group (0 in Zabbix trigger actions)
-    operator      = 0  # equals (0 in Zabbix host group condition)
+    conditiontype = 0 # Host group (0 in Zabbix trigger actions)
+    operator      = 0 # equals (0 in Zabbix host group condition)
     value         = zabbix_host_group.servers.id
   }
 
