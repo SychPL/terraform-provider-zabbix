@@ -76,6 +76,7 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret-pw@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
 		{"query in url", map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php?sid=s3cret-pw", "api_token": "t"}, "query string", ""},
 		{"tls_insecure with ca_cert_file", map[string]interface{}{"url": s.URL, "api_token": "t", "tls_insecure": true, "ca_cert_file": "ca.pem"}, "mutually exclusive", ""},
+		{"both auth methods explicit", map[string]interface{}{"url": s.URL, "api_token": "t", "username": "u", "password": "p"}, "api_token and username/password are mutually exclusive", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
 		// The plain-HTTP warning must come from providerConfigure itself and
 		// must survive a failing configure (DNS error on the .invalid TLD).
@@ -238,6 +239,12 @@ func TestPlainHTTPWarning(t *testing.T) {
 	if w := versionDiagnostics("6.4.0"); !w.HasError() {
 		t.Errorf("6.4.0 must be rejected, got %v", w)
 	}
+	if w := versionDiagnostics("6.4.0rc1"); len(w) != 1 || w.HasError() {
+		t.Errorf("an unparsable 6.4 patch level must warn as untested, never silently pass, got %v", w)
+	}
+	if w := versionDiagnostics("6.4"); len(w) != 1 || w.HasError() {
+		t.Errorf("a bare 6.4 must warn as untested, got %v", w)
+	}
 }
 
 func TestEnvBoolDefault(t *testing.T) {
@@ -349,6 +356,18 @@ func TestProviderConfigure_IncompleteCredentialsWithEnvToken(t *testing.T) {
 	_, diags := providerConfigure(context.Background(), d)
 	if !diags.HasError() || !diagContains(diags, diag.Error, "both username and password") {
 		t.Fatalf("username without password must not silently drop the env token and log in with an empty password, got %v", diags)
+	}
+}
+
+func TestProviderConfigure_BothAmbientMethodsConflict(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv("ZABBIX_API_TOKEN", "envtok")
+	t.Setenv("ZABBIX_USERNAME", "Admin")
+	t.Setenv("ZABBIX_PASSWORD", "zabbix")
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php"})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "mutually exclusive") {
+		t.Fatalf("two ambient auth methods must be a hard error, got %v", diags)
 	}
 }
 

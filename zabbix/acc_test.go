@@ -2,6 +2,7 @@ package zabbix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -97,7 +98,7 @@ func testAccCheckGone(t *testing.T, addr string, get func(*ZabbixClient, string)
 			if k != addr {
 				continue
 			}
-			if err := get(testAccClient(t), rs.Primary.ID); err != ErrNotFound {
+			if err := get(testAccClient(t), rs.Primary.ID); !errors.Is(err, ErrNotFound) {
 				return fmt.Errorf("%s %s still exists (err=%v)", addr, rs.Primary.ID, err)
 			}
 		}
@@ -466,6 +467,7 @@ resource "zabbix_action" "act" {
 `, adminGroup, adminUser, adminUser)
 	opsUsersOnly := fmt.Sprintf(`
   pause_suppressed   = false
+  pause_symptoms     = false
   notify_if_canceled = false
   operation {
     esc_step_to = 0
@@ -518,6 +520,7 @@ resource "zabbix_action" "act" {
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.esc_step_to", "0"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.mediatypeid", "0"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "pause_suppressed", "false"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "pause_symptoms", "false"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "notify_if_canceled", "false"),
 			)},
 			{

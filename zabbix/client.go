@@ -228,6 +228,7 @@ type Action struct {
 	Status           string            `json:"status"`
 	EscPeriod        string            `json:"esc_period"`
 	PauseSuppressed  string            `json:"pause_suppressed"`
+	PauseSymptoms    string            `json:"pause_symptoms"` // "1" pauses escalation for symptom problems (6.4+)
 	NotifyIfCanceled string            `json:"notify_if_canceled"`
 	Filter           ActionFilter      `json:"filter"`
 	Operations       []ActionOperation `json:"operations"`
@@ -842,6 +843,7 @@ func actionParams(action *Action) map[string]interface{} {
 		"status":             action.Status,
 		"esc_period":         action.EscPeriod,
 		"pause_suppressed":   action.PauseSuppressed,
+		"pause_symptoms":     action.PauseSymptoms,
 		"notify_if_canceled": action.NotifyIfCanceled,
 		"filter":             ActionFilter{EvalType: action.Filter.EvalType, Conditions: conds},
 		"operations":         ops,
@@ -861,7 +863,7 @@ func (c *ZabbixClient) CreateAction(ctx context.Context, action *Action) (string
 func (c *ZabbixClient) GetAction(ctx context.Context, id string) (*Action, error) {
 	params := map[string]interface{}{
 		"actionids":        []string{id},
-		"output":           []string{"actionid", "name", "eventsource", "status", "esc_period", "pause_suppressed", "notify_if_canceled"},
+		"output":           []string{"actionid", "name", "eventsource", "status", "esc_period", "pause_suppressed", "pause_symptoms", "notify_if_canceled"},
 		"selectFilter":     "extend",
 		"selectOperations": "extend",
 	}

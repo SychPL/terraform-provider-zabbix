@@ -47,6 +47,8 @@
   fails loudly instead of orphaning the object outside the state.
 - Mutation responses are verified against the mutated object's ID; empty or
   foreign IDs are errors.
+- The version gate is fail-closed: an unparsable 6.4 patch level (e.g. a
+  release candidate) gets the "untested" warning instead of silently passing.
 
 ### Added
 
@@ -58,6 +60,8 @@
   (`user.checkAuthentication` cannot validate API tokens before 6.4.1).
 - Configure warnings (plain HTTP, disabled TLS verification, ignored ambient
   credentials) are reported even when configure fails.
+- `zabbix_action.pause_symptoms` (pause escalation for symptom problems,
+  Zabbix 6.4).
 - `api_token` authentication (Bearer header, validated at configure time with
   `user.checkAuthentication`, independent of the token's method permissions),
   `tls_insecure` (warns when active), `ca_cert_file` (added to the system

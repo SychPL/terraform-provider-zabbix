@@ -76,6 +76,19 @@ func TestHostRead_NoAgentInterfaceShowsDrift(t *testing.T) {
 	}
 }
 
+func TestHostRead_IgnoresNonMainAgentInterface(t *testing.T) {
+	// An agent interface with main=0 is not the managed interface: the host
+	// reads as agentless (visible drift) and the secondary interface is left
+	// untouched.
+	c := fixtureServer(t, "host.get", `[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+		"interfaces":[{"interfaceid":"9","type":"1","main":"0","useip":"1","ip":"10.0.0.9","dns":"","port":"10060"}]}]`)
+	d := readInto(t, resourceHost(), c, "1")
+	if d.Get("ip") != "" || d.Get("port") != defaultAgentPort || d.Get("use_ip") != true {
+		t.Errorf("non-main agent interface must not be adopted, got ip=%v port=%v", d.Get("ip"), d.Get("port"))
+	}
+}
+
 func TestHostRead_TransportErrorKeepsID(t *testing.T) {
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: "database down"}
@@ -145,7 +158,7 @@ func TestMediaTypeRead_EmailWithAuth(t *testing.T) {
 }
 
 const actionFixture = `[{"actionid":"10","name":"exp-a","eventsource":"0","status":"0","esc_period":"1h",
-	"pause_suppressed":"1","notify_if_canceled":"0",
+	"pause_suppressed":"1","pause_symptoms":"0","notify_if_canceled":"0",
 	"filter":{"evaltype":"2","formula":"","conditions":[
 		{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"},
 		{"conditiontype":"26","operator":"2","value":"prod","value2":"env","formulaid":"B"}],"eval_formula":"A or B"},
@@ -158,7 +171,7 @@ func TestActionRead_Mapping(t *testing.T) {
 	c := fixtureServer(t, "action.get", strings.NewReplacer("%OP%", "0", "%DM%", "0").Replace(actionFixture))
 	d := readInto(t, resourceAction(), c, "10")
 
-	if d.Get("evaltype") != 2 || d.Get("pause_suppressed") != true || d.Get("notify_if_canceled") != false {
+	if d.Get("evaltype") != 2 || d.Get("pause_suppressed") != true || d.Get("pause_symptoms") != false || d.Get("notify_if_canceled") != false {
 		t.Errorf("action attributes not mapped")
 	}
 	conds := d.Get("condition").(*schema.Set).List()

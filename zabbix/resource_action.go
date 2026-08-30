@@ -14,7 +14,7 @@ func resourceAction() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix trigger action with \"send message\" operations. " +
 			"Recovery and update operations are not supported yet. " +
-			"Every attribute is managed authoritatively: after `terraform import`, reproduce the full configuration (all conditions and operations, and non-default `enabled`, `esc_period`, `evaltype`, `pause_suppressed`, `notify_if_canceled`) and review the plan before the first apply - missing pieces are removed or reset.",
+			"Every attribute is managed authoritatively: after `terraform import`, reproduce the full configuration (all conditions and operations, and non-default `enabled`, `esc_period`, `evaltype`, `pause_suppressed`, `pause_symptoms`, `notify_if_canceled`) and review the plan before the first apply - missing pieces are removed or reset.",
 		CreateContext: resourceActionCreate,
 		ReadContext:   resourceActionRead,
 		UpdateContext: resourceActionUpdate,
@@ -62,6 +62,12 @@ func resourceAction() *schema.Resource {
 				Optional:    true,
 				Default:     true,
 				Description: "Pause escalations for suppressed problems.",
+			},
+			"pause_symptoms": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     true,
+				Description: "Pause escalations for symptom problems.",
 			},
 			"notify_if_canceled": {
 				Type:        schema.TypeBool,
@@ -260,6 +266,7 @@ func expandAction(d *schema.ResourceData) *Action {
 		Status:           boolToStatus(d.Get("enabled").(bool)),
 		EscPeriod:        d.Get("esc_period").(string),
 		PauseSuppressed:  boolToFlag(d.Get("pause_suppressed").(bool)),
+		PauseSymptoms:    boolToFlag(d.Get("pause_symptoms").(bool)),
 		NotifyIfCanceled: boolToFlag(d.Get("notify_if_canceled").(bool)),
 		Filter: ActionFilter{
 			EvalType:   strconv.Itoa(d.Get("evaltype").(int)),
@@ -410,6 +417,7 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		"esc_period":         action.EscPeriod,
 		"evaltype":           evaltype,
 		"pause_suppressed":   action.PauseSuppressed == "1",
+		"pause_symptoms":     action.PauseSymptoms == "1",
 		"notify_if_canceled": action.NotifyIfCanceled == "1",
 		"condition":          conds,
 		"operation":          ops,

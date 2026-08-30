@@ -436,16 +436,7 @@ func TestCall_RedirectsAreNotFollowed(t *testing.T) {
 func TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin(t *testing.T) {
 	// An injected non-JSON-RPC body must not be able to fake a session expiry
 	// (which would re-login and retry an already executed mutation).
-	var logins, deletes atomic.Int32
-	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
-		if req.Method == "user.login" {
-			logins.Add(1)
-			return "tok", nil
-		}
-		deletes.Add(1)
-		return nil, nil // handled below by overriding the body
-	})
-	_ = s
+	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		deletes.Add(1)
 		// Correct error data but a broken envelope (wrong version, wrong id).

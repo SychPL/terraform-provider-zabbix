@@ -15,6 +15,7 @@ jobs:
 
   goreleaser:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: ci
     # Protect this environment in the repository settings (required reviewers)
     # to require an approval before the signing key is used.

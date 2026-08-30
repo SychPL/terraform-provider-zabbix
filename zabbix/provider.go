@@ -182,8 +182,11 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 
 // attrWrittenInConfig reports whether the attribute was written in the
 // configuration, as opposed to injected by its environment DefaultFunc. The
-// raw config is authoritative; when the SDK cannot provide it (schema test
-// harness) the value is compared with the environment as a heuristic.
+// raw config is authoritative and always available under a real Terraform
+// core; the env-comparison fallback exists only for the schema test harness
+// (which cannot carry a raw config) and misclassifies a config value that
+// happens to equal the environment variable - acceptable in tests, never hit
+// in production.
 func attrWrittenInConfig(d *schema.ResourceData, attr, envVar string) bool {
 	if raw := d.GetRawConfig(); !raw.IsNull() {
 		return writtenInRaw(raw, attr)
@@ -221,11 +224,16 @@ func plainHTTPWarning(rawURL string) diag.Diagnostics {
 // relies on, only exists since 6.4.1 (ZBXNEXT-8012). Other version lines are
 // untested and produce a warning.
 func versionDiagnostics(version string) diag.Diagnostics {
-	if strings.HasPrefix(version, SupportedVersionPrefix+".") {
-		if patch, err := strconv.Atoi(strings.TrimPrefix(version, SupportedVersionPrefix+".")); err == nil && patch < 1 {
-			return diag.Errorf("Zabbix %s is not supported: user.checkAuthentication cannot validate API tokens before %s.1 (ZBXNEXT-8012); upgrade the server", version, SupportedVersionPrefix)
+	if rest, ok := strings.CutPrefix(version, SupportedVersionPrefix+"."); ok {
+		// Only a plain numeric patch level counts as a tested release; anything
+		// else (release candidates, betas) falls through to the untested
+		// warning instead of silently passing the gate (fail-closed).
+		if patch, err := strconv.Atoi(rest); err == nil {
+			if patch < 1 {
+				return diag.Errorf("Zabbix %s is not supported: user.checkAuthentication cannot validate API tokens before %s.1 (ZBXNEXT-8012); upgrade the server", version, SupportedVersionPrefix)
+			}
+			return nil
 		}
-		return nil
 	}
 	return diag.Diagnostics{{
 		Severity: diag.Warning,

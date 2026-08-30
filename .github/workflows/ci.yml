@@ -55,6 +55,7 @@ jobs:
         run: terraform fmt -check -recursive examples/ example_deployment/
       - name: Example configurations validate against the built provider
         run: |
+          mkdir -p /tmp/tfdev
           go build -o /tmp/tfdev/terraform-provider-zabbix .
           cat > /tmp/dev.tfrc <<EOF
           provider_installation {

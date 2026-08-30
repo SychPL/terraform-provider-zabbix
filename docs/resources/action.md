@@ -3,12 +3,12 @@
 page_title: "zabbix_action Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. Every attribute is managed authoritatively: after terraform import, reproduce the full configuration (all conditions and operations, and non-default enabled, esc_period, evaltype, pause_suppressed, notify_if_canceled) and review the plan before the first apply - missing pieces are removed or reset.
+  Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. Every attribute is managed authoritatively: after terraform import, reproduce the full configuration (all conditions and operations, and non-default enabled, esc_period, evaltype, pause_suppressed, pause_symptoms, notify_if_canceled) and review the plan before the first apply - missing pieces are removed or reset.
 ---
 
 # zabbix_action (Resource)
 
-Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. Every attribute is managed authoritatively: after `terraform import`, reproduce the full configuration (all conditions and operations, and non-default `enabled`, `esc_period`, `evaltype`, `pause_suppressed`, `notify_if_canceled`) and review the plan before the first apply - missing pieces are removed or reset.
+Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. Every attribute is managed authoritatively: after `terraform import`, reproduce the full configuration (all conditions and operations, and non-default `enabled`, `esc_period`, `evaltype`, `pause_suppressed`, `pause_symptoms`, `notify_if_canceled`) and review the plan before the first apply - missing pieces are removed or reset.
 
 ## Example Usage
 
@@ -76,6 +76,7 @@ resource "zabbix_action" "notify_slack" {
 - `eventsource` (Number) Event source. Only 0 (trigger actions) is supported. Changing it forces a new resource.
 - `notify_if_canceled` (Boolean) Notify about canceled escalations.
 - `pause_suppressed` (Boolean) Pause escalations for suppressed problems.
+- `pause_symptoms` (Boolean) Pause escalations for symptom problems.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
