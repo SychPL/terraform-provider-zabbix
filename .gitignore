@@ -31,3 +31,6 @@ Thumbs.db
 
 # Debug and execution logs
 *.log
+
+# Local development environments
+docker-compose.yml
