@@ -2,6 +2,7 @@ package zabbix
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -304,10 +305,14 @@ func TestCall_FailedLoginIsMemoisedForLateCallers(t *testing.T) {
 }
 
 func TestCall_ReloginSurvivesInitiatorCancellation(t *testing.T) {
+	var logins atomic.Int32
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "user.login":
-			time.Sleep(100 * time.Millisecond)
+			if logins.Add(1) == 1 {
+				return "tok1", nil // initial session, expires immediately below
+			}
+			time.Sleep(100 * time.Millisecond) // the slow re-login
 			return "tok2", nil
 		case "hostgroup.get":
 			if req.Auth != "Bearer tok2" {
@@ -321,10 +326,17 @@ func TestCall_ReloginSurvivesInitiatorCancellation(t *testing.T) {
 	if err := c.Login(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// The initiator gives up quickly; a patient caller must still get the new token.
+	// The initiator gives up quickly (and must not be held for the whole
+	// login); a patient caller must still get the new token.
 	short, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	_, _ = c.GetHostGroup(short, "1")
+	start := time.Now()
+	if _, err := c.GetHostGroup(short, "1"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("initiator must return with its own deadline error, got %v", err)
+	}
+	if time.Since(start) > 80*time.Millisecond {
+		t.Fatalf("initiator waited for the full login instead of honouring its context (%s)", time.Since(start))
+	}
 	if _, err := c.GetHostGroup(context.Background(), "1"); err != nil {
 		t.Fatalf("the login must complete for other callers even if its initiator was cancelled: %v", err)
 	}
@@ -462,6 +474,10 @@ func TestNewZabbixClient_TLS(t *testing.T) {
 	if c.TLSConfig().RootCAs == nil {
 		t.Error("ca_cert_file must set RootCAs")
 	}
+	// The custom CA is added to the system pool, not used instead of it.
+	if sys, err := x509.SystemCertPool(); err == nil && sys != nil && len(sys.Subjects()) > 0 && c.TLSConfig().RootCAs.Equal(x509.NewCertPool()) { //nolint:staticcheck
+		t.Error("RootCAs must extend the system pool")
+	}
 	if _, err := c.GetVersion(context.Background()); err != nil {
 		t.Errorf("request with custom CA failed: %v", err)
 	}
@@ -518,8 +534,14 @@ func TestActionParams_EventSourceOnlyOnCreate(t *testing.T) {
 	if _, ok := update["eventsource"]; ok {
 		t.Error("update must not send immutable eventsource")
 	}
-	if ops, ok := update["operations"].([]interface{}); !ok || ops == nil {
-		t.Errorf("operations must be an array, got %#v", update["operations"])
+	for _, payload := range []map[string]interface{}{create, update} {
+		if ops, ok := payload["operations"].([]interface{}); !ok || ops == nil {
+			t.Errorf("operations must be an array, got %#v", payload["operations"])
+		}
+		filter, _ := payload["filter"].(map[string]interface{})
+		if conds, ok := filter["conditions"].([]interface{}); !ok || conds == nil {
+			t.Errorf("filter.conditions must be an array, got %#v", filter["conditions"])
+		}
 	}
 }
 

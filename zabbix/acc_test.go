@@ -378,6 +378,8 @@ resource "zabbix_action" "act" {
   }
 `, adminGroup, adminUser, adminUser)
 	opsUsersOnly := fmt.Sprintf(`
+  pause_suppressed   = false
+  notify_if_canceled = false
   operation {
     esc_step_to = 0
     users       = [%q]
@@ -404,6 +406,8 @@ resource "zabbix_action" "act" {
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.users.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.esc_step_to", "0"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.mediatypeid", "0"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "pause_suppressed", "false"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "notify_if_canceled", "false"),
 			)},
 			{ResourceName: "zabbix_action.act", ImportState: true, ImportStateVerify: true},
 		},

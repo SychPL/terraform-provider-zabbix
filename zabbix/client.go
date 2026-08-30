@@ -378,29 +378,40 @@ func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
 	c.flight = f
 	c.mu.Unlock()
 
-	loginCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginTimeout)
-	defer cancel()
-	var token string
-	params := map[string]string{"username": c.username, "password": c.password}
-	err := c.rawCall(loginCtx, "user.login", params, "", &token)
-	if err != nil {
-		err = fmt.Errorf("user.login failed: %w", err)
-	}
+	// The login itself is detached from the initiating caller (its own
+	// deadline) so that other waiters still get a token if the initiator gives
+	// up; the initiator waits for it like everybody else, honouring its ctx.
+	go func() {
+		loginCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginTimeout)
+		defer cancel()
+		var token string
+		params := map[string]string{"username": c.username, "password": c.password}
+		err := c.rawCall(loginCtx, "user.login", params, "", &token)
+		if err != nil {
+			err = fmt.Errorf("user.login failed: %w", err)
+		}
 
-	// Publish the result and clear the flight atomically: a caller arriving in
-	// between must either wait on this flight or see the new token.
-	c.mu.Lock()
-	if err == nil {
-		c.token = token
-		c.failed = nil
-	} else {
-		c.failed = &loginFailure{staleToken: staleToken, err: err, at: time.Now()}
+		// Publish the result and clear the flight atomically: a caller arriving
+		// in between must either wait on this flight or see the new token.
+		c.mu.Lock()
+		if err == nil {
+			c.token = token
+			c.failed = nil
+		} else {
+			c.failed = &loginFailure{staleToken: staleToken, err: err, at: time.Now()}
+		}
+		f.err = err
+		close(f.done)
+		c.flight = nil
+		c.mu.Unlock()
+	}()
+
+	select {
+	case <-f.done:
+		return f.err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	f.err = err
-	close(f.done)
-	c.flight = nil
-	c.mu.Unlock()
-	return err
 }
 
 // Login authenticates eagerly. It is a no-op when an API token is configured.
@@ -592,6 +603,20 @@ func (c *ZabbixClient) UpdateHost(ctx context.Context, id string, spec *HostSpec
 		params["templates_clear"] = templateRefs(templatesClear)
 	}
 	return c.Call(ctx, "host.update", params, nil)
+}
+
+// CreateHostInterface adds a main agent interface to an existing host.
+func (c *ZabbixClient) CreateHostInterface(ctx context.Context, hostID string, iface HostInterface) error {
+	params := map[string]interface{}{
+		"hostid": hostID,
+		"type":   "1",
+		"main":   "1",
+		"useip":  iface.UseIP,
+		"ip":     iface.IP,
+		"dns":    iface.DNS,
+		"port":   iface.Port,
+	}
+	return c.Call(ctx, "hostinterface.create", params, nil)
 }
 
 func (c *ZabbixClient) UpdateHostInterface(ctx context.Context, iface HostInterface) error {

@@ -102,11 +102,6 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 	if !planKnown(d, "use_ip", "ip", "dns") {
 		return nil
 	}
-	// Interface attributes are only validated when they are being set: an
-	// imported host without an agent interface must remain updatable.
-	if d.Id() != "" && !d.HasChanges("use_ip", "ip", "dns", "port") {
-		return nil
-	}
 	if d.Get("use_ip").(bool) {
 		if d.Get("ip").(string) == "" {
 			return fmt.Errorf("ip is required when use_ip is true")
@@ -180,7 +175,14 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 		values["dns"] = iface.DNS
 		values["port"] = iface.Port
 	} else {
-		tflog.Warn(ctx, fmt.Sprintf("host %s has no main agent interface; interface attributes are not refreshed", d.Id()))
+		// No agent interface (imported SNMP-only host, or the interface was
+		// removed outside Terraform): reflect that so the drift is visible; the
+		// next apply recreates the interface from the configuration.
+		tflog.Warn(ctx, fmt.Sprintf("host %s has no main agent interface", d.Id()))
+		values["use_ip"] = true
+		values["ip"] = ""
+		values["dns"] = ""
+		values["port"] = "10050"
 	}
 	if err := setFields(d, values); err != nil {
 		return diag.FromErr(err)
@@ -212,14 +214,16 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 	}
 
 	if d.HasChanges("use_ip", "ip", "dns", "port") {
-		iface := host.AgentInterface()
-		if iface == nil {
-			return diag.Errorf("host %s has no main agent interface to update; add one in Zabbix or remove the interface attributes from the configuration", d.Id())
-		}
 		spec := expandHost(d).Interface
-		spec.InterfaceID = iface.InterfaceID
-		if err := client.UpdateHostInterface(ctx, spec); err != nil {
-			return diag.Errorf("updating host %s agent interface: %s", d.Id(), err)
+		if iface := host.AgentInterface(); iface != nil {
+			spec.InterfaceID = iface.InterfaceID
+			if err := client.UpdateHostInterface(ctx, spec); err != nil {
+				return diag.Errorf("updating host %s agent interface: %s", d.Id(), err)
+			}
+		} else if err := client.CreateHostInterface(ctx, d.Id(), spec); err != nil {
+			// The agent interface is gone (removed outside Terraform or never
+			// existed on an imported host): recreate it from the configuration.
+			return diag.Errorf("creating agent interface for host %s: %s", d.Id(), err)
 		}
 	}
 

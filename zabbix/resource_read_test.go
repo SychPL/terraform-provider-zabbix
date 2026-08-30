@@ -58,17 +58,19 @@ func TestHostRead_PicksMainAgentInterface(t *testing.T) {
 	}
 }
 
-func TestHostRead_NoAgentInterfaceKeepsAttributes(t *testing.T) {
+func TestHostRead_NoAgentInterfaceShowsDrift(t *testing.T) {
+	// The agent interface was removed outside Terraform: state must reflect it
+	// so that the plan shows the drift (and the next apply recreates it).
 	c := fixtureServer(t, "host.get", `[{"hostid":"1","host":"snmp-only","name":"snmp-only","status":"0","description":"",
 		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
 		"interfaces":[{"interfaceid":"5","type":"2","main":"1","useip":"1","ip":"10.0.0.2","dns":"","port":"161"}]}]`)
-	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"ip": "192.0.2.1"})
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"ip": "192.0.2.1", "port": "10051"})
 	d.SetId("1")
 	if diags := resourceHost().ReadContext(context.Background(), d, c); diags.HasError() {
 		t.Fatal(diags)
 	}
-	if d.Get("ip") != "192.0.2.1" || d.Get("port") != "10050" {
-		t.Errorf("interface attributes must be left untouched, got ip=%v port=%v", d.Get("ip"), d.Get("port"))
+	if d.Get("ip") != "" || d.Get("port") != "10050" || d.Get("use_ip") != true {
+		t.Errorf("a missing agent interface must be reflected in state, got ip=%v port=%v", d.Get("ip"), d.Get("port"))
 	}
 }
 
@@ -276,12 +278,14 @@ func TestHostUpdate_TemplatesClearFromAPIState(t *testing.T) {
 }
 
 func TestHostUpdate_NoAgentInterface(t *testing.T) {
-	// Imported SNMP-only host: interface attributes cannot be updated, and no
-	// hostinterface.update must be attempted on the SNMP interface.
+	// SNMP-only host: the agent interface is created from the configuration;
+	// the SNMP interface must never be touched.
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "host.update":
 			return map[string][]string{"hostids": {"1"}}, nil
+		case "hostinterface.create":
+			return map[string][]string{"interfaceids": {"6"}}, nil
 		case "host.get":
 			return json.RawMessage(`[{"hostid":"1","host":"snmp-only","name":"snmp-only","status":"0","description":"",
 				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
@@ -294,12 +298,16 @@ func TestHostUpdate_NoAgentInterface(t *testing.T) {
 	r := resourceHost()
 	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "snmp-only", "groups": []interface{}{"2"}, "ip": "192.0.2.1"})
 	d.SetId("1")
-	diags := r.UpdateContext(context.Background(), d, c)
-	if !diags.HasError() || !strings.Contains(diags[0].Summary, "no main agent interface") {
-		t.Fatalf("updating the interface of a host without an agent interface must fail clearly, got %v", diags)
+	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatalf("a missing agent interface must be recreated, got %v", diags)
 	}
 	if len(s.calls("hostinterface.update")) != 0 {
 		t.Fatal("the SNMP interface must never be touched")
+	}
+	var params map[string]interface{}
+	_ = json.Unmarshal(s.calls("hostinterface.create")[0].Params, &params)
+	if params["type"] != "1" || params["main"] != "1" || params["ip"] != "192.0.2.1" || params["hostid"] != "1" {
+		t.Fatalf("agent interface must be created from the configuration, got %v", params)
 	}
 }
 

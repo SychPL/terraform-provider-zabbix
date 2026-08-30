@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
 	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -65,7 +67,7 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"token rejected", map[string]interface{}{"url": s.URL, "api_token": "bad"}, "api_token was rejected", ""},
 		{"user+pass ok", map[string]interface{}{"url": s.URL, "username": "u", "password": "p"}, "", ""},
 		{"bad url", map[string]interface{}{"url": "ftp://x", "api_token": "t"}, "not a valid http(s) URL", ""},
-		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
+		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret-pw@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
 	}
 	for _, tc := range cases {
@@ -75,6 +77,11 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 			if tc.wantErr != "" {
 				if !diags.HasError() || !strings.Contains(diags[0].Summary, tc.wantErr) {
 					t.Fatalf("want error containing %q, got %v", tc.wantErr, diags)
+				}
+				for _, dg := range diags {
+					if strings.Contains(dg.Summary+dg.Detail, "s3cret-pw") {
+						t.Fatalf("credentials from the URL must never appear in diagnostics: %v", dg)
+					}
 				}
 				return
 			}
@@ -244,27 +251,34 @@ func TestHostCustomizeDiff_NameFollowsHostUnlessConfigured(t *testing.T) {
 
 func TestHostCustomizeDiff_ImportedHostWithoutAgentInterface(t *testing.T) {
 	r := resourceHost()
-	// State of an imported SNMP-only host: no ip, use_ip defaults to true.
+	// State of an imported SNMP-only host: no ip, use_ip defaults to true. The
+	// configuration must describe the agent interface to be created.
 	state := &terraform.InstanceState{ID: "1", Attributes: map[string]string{
 		"host": "snmp-only", "name": "snmp-only", "enabled": "true", "description": "old",
 		"groups.#": "1", "groups.0": "2", "use_ip": "true", "ip": "", "dns": "", "port": "10050",
 	}}
-	base := map[string]interface{}{"host": "snmp-only", "groups": []interface{}{"2"}}
+	withIP := map[string]interface{}{"host": "snmp-only", "groups": []interface{}{"2"}, "description": "new", "ip": "192.0.2.5"}
+	diff, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(withIP), nil)
+	if err != nil || diff == nil || diff.Attributes["ip"] == nil || diff.Attributes["ip"].New != "192.0.2.5" {
+		t.Errorf("configuring the agent interface of an imported host must plan its creation, got diff=%v err=%v", diff, err)
+	}
+	noIP := map[string]interface{}{"host": "snmp-only", "groups": []interface{}{"2"}, "description": "new"}
+	if _, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(noIP), nil); err == nil || !strings.Contains(err.Error(), "ip is required") {
+		t.Errorf("a host without any interface description must be rejected, got %v", err)
+	}
+}
 
-	desc := map[string]interface{}{"description": "new"}
-	for k, v := range base {
-		desc[k] = v
-	}
-	if _, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(desc), nil); err != nil {
-		t.Errorf("changing description of a host without agent interface must plan: %v", err)
-	}
-
-	port := map[string]interface{}{"port": "10051"}
-	for k, v := range base {
-		port[k] = v
-	}
-	if _, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(port), nil); err == nil || !strings.Contains(err.Error(), "ip is required") {
-		t.Errorf("changing interface attributes without ip must still fail, got %v", err)
+func TestResourceTimeoutsDefaults(t *testing.T) {
+	for name, r := range Provider().ResourcesMap {
+		to := r.Timeouts
+		if to == nil {
+			t.Fatalf("%s: timeouts not configured", name)
+		}
+		for op, d := range map[string]*time.Duration{"create": to.Create, "read": to.Read, "update": to.Update, "delete": to.Delete} {
+			if d == nil || *d != 2*time.Minute {
+				t.Errorf("%s: %s timeout must default to 2 minutes, got %v", name, op, d)
+			}
+		}
 	}
 }
 

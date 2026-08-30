@@ -24,7 +24,8 @@
   as a warning in the plan output.
 - `zabbix_host` updates no longer replace the whole interface collection
   (which deleted SNMP/IPMI/JMX interfaces); the main agent interface is updated
-  with `hostinterface.update`.
+  with `hostinterface.update`, and recreated with `hostinterface.create` when
+  it was removed outside Terraform (the drift is visible in the plan).
 - `zabbix_host` reads the correct interface (`type = 1`, `main = 1`) instead of
   the first one returned by the API.
 - Unlinking templates uses `templates_clear` so inherited entities are removed.
@@ -43,7 +44,8 @@
   credentials are rejected.
 - Automatic single re-login when a username/password session expires; all
   concurrent callers share the result (including a failure), the login runs
-  with its own deadline and a failed login is not retried for 30 seconds.
+  in the background with its own deadline (every caller still honours its
+  own context) and a failed login is not retried for 30 seconds.
 - `terraform import` for all resources. Objects the provider cannot represent
   (unsupported media type types, script parameters, action operation types,
   operation conditions, custom expressions) are refused with a hint instead of

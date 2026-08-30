@@ -59,7 +59,7 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C15 | P3 | Leniwe pierwsze logowanie tez single-flight | `TestCall_LazyFirstLoginIsSingleFlight` | DONE |
 | C16 | P2 | Single-flight loginu dzieli wynik (takze blad) ze wszystkimi oczekujacymi - nieudany re-login nie powoduje N kolejnych prob; wynik publikowany i `flight` czyszczony atomowo pod mutexem | `TestCall_FailedReloginIsSharedByWaiters` | DONE |
 | C17 | P2 | Brak timeoutu na `http.Client` - deadline zawsze z ctx (timeouts zasobu; `configureTimeout` 2 min dla probe'ow providera), wiec `timeouts { create = "15m" }` dziala | `TestNewZabbixClient_NoImplicitTimeout`, `TestCall_ContextCancelled` | DONE |
-| C19 | P2 | Login single-flight dziala na kontekscie odlaczonym od inicjatora (wlasny limit 60 s), wiec krotki deadline jednego wywolania nie anuluje logowania innym; nieudany login zapamietany 30 s dla tej samej generacji tokenu (spoznieni wywolujacy nie generuja kolejnych prob) | `TestCall_ReloginSurvivesInitiatorCancellation`, `TestCall_FailedLoginIsMemoisedForLateCallers` | DONE |
+| C19 | P2 | Login single-flight dziala w tle na kontekscie odlaczonym od inicjatora (wlasny limit 60 s); kazdy wywolujacy, takze inicjator, czeka tylko do swojego deadline'u; nieudany login zapamietany 30 s dla tej samej generacji tokenu (spoznieni wywolujacy nie generuja kolejnych prob) | `TestCall_ReloginSurvivesInitiatorCancellation`, `TestCall_FailedLoginIsMemoisedForLateCallers` | DONE |
 | C20 | P3 | `ca_cert_file` dokladany do systemowej puli CA, nie zamiast niej; `isLoopback` przez `net.ParseIP().IsLoopback()` (bez prefiksu `127.` dla nazw DNS) | `TestNewZabbixClient_TLS`, `TestIsLoopback` | DONE |
 | C18 | P2 | Mutacja nigdy nie jest ponawiana po bledzie transportu (zerwane polaczenie = dokladnie 1 request); body odpowiedzi HTTP nie trafia do diagnostyki (test z echem tokenu) | `TestCall_MutationIsNeverRetriedOnTransportError`, `TestCall_HTTPErrorIsNotNotFound` | DONE |
 
@@ -90,7 +90,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | H4 | P3 | Odlaczenie template przez `templates_clear` (roznica stare - nowe), drugi template zostaje | krok 2 `TestAccHost_lifecycle` (2 -> 1 template) | DONE |
 | H6 | P2 | `name` niekonfigurowane = zawsze rowne `host`; normalizacja w `CustomizeDiff` (`SetNew`), wiec zmiana nazwy widocznej poza TF pokazuje sie w planie | `TestHostCustomizeDiff_NameFollowsHostUnlessConfigured`, krok DNS `TestAccHost_lifecycle` | DONE |
 | H7 | P2 | `templates_clear` liczone z aktualnego stanu API (template podpiety poza TF jest czyszczony, nie tylko odlaczany) | `TestHostUpdate_TemplatesClearFromAPIState` | DONE |
-| H5 | P2 | Zaimportowany host bez interfejsu agenta (np. SNMP-only) jest edytowalny (grupy, opis); walidacja `ip`/`dns` tylko przy tworzeniu lub zmianie pol interfejsu; proba zmiany interfejsu = czytelny blad, interfejs SNMP nietkniety | `TestHostCustomizeDiff_ImportedHostWithoutAgentInterface`, `TestHostUpdate_NoAgentInterface` | DONE |
+| H5 | P2 | Host bez interfejsu agenta (zaimportowany SNMP-only lub interfejs usuniety poza TF): Read pokazuje drift (puste `ip`/`dns`), a Update tworzy interfejs agenta z konfiguracji (`hostinterface.create`); interfejs SNMP nietkniety | `TestHostRead_NoAgentInterfaceShowsDrift`, `TestHostUpdate_NoAgentInterface`, `TestHostCustomizeDiff_ImportedHostWithoutAgentInterface` | DONE |
 
 ### 3.4 `zabbix_media_type`
 
@@ -149,6 +149,7 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 | T7 | P3 | `.goreleaser.yml`: usunieta niewspierana para darwin/arm, `archives.formats`, manifest Registry (`terraform-registry-manifest.json`) w release i w checksumie | `goreleaser check` w CI | DONE |
 | T8 | P3 | CI acceptance: czeka na start zabbix-server (locki DB przy pierwszym starcie blokowaly `host.create`), lekkie template'y w tescie hosta, zrzut logow przy failu, obrazy przypiete digestem | `ci.yml`, `docker-compose.acc.yml` | DONE |
 | T10 | P3 | CI: `terraform validate` wszystkich `examples/` i `example_deployment/` na zbudowanym providerze (dev override); usuniety hook `go mod tidy` z goreleasera (CI pilnuje czystosci) | `ci.yml` | DONE |
+| T12 | P3 | Testy: domyslne timeouty 2 min asertowane dla 4 zasobow; `filter.conditions` zawsze tablica; sekret z URL nigdy w zadnej diagnostyce; `pause_suppressed`/`notify_if_canceled` = false round-trip w akceptacji | `TestResourceTimeoutsDefaults`, `TestActionParams_EventSourceOnlyOnCreate`, `TestProviderConfigure_AuthValidation`, `TestAccAction_lifecycle` | DONE |
 | T11 | P2 | CI acceptance: `ANALYZE` swiezej bazy przed testami - bez statystyk planera zapytania `templates_clear` trwaly minuty (potwierdzone `pg_stat_activity`), hosty testowe tworzone jako wylaczone | `ci.yml`, run 33327064286 zielony | DONE |
 | T9 | P2 | CI egzekwuje C7: blokujacy grep na `os.Stderr/Stdout`, `fmt.Fprint/Print`, `log.` w kodzie providera; `example_deployment/` w `terraform fmt -check` | `ci.yml` | DONE |
 | T4 | P3 | `docker-compose.acc.yml` (upstream ignoruje `docker-compose.yml` jako plik lokalny): bez `version:`, obrazy `alpine-6.4.21`, healthchecki, porty na 127.0.0.1 | `docker compose -f docker-compose.acc.yml config` | DONE |
@@ -181,7 +182,7 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 - Utrata uprawnien = "not found" (patrz 3.2).
 - `TestAccProvider_APIToken` wymaga poswiadczen haslem (mintuje token); przy uruchomieniu
   akceptacji samym tokenem jest pomijany.
-- `zabbix_host` bez interfejsu agenta (tylko SNMP) jest read-only w zakresie interfejsu;
+- `zabbix_host` zarzadza tylko glownym interfejsem agenta (tworzy go, gdy brak); pozostale interfejsy sa nietykane;
   v0.3: blok `interface` (lista).
 - Zabbix 6.4 jest EOL; 7.0 LTS nietestowane (warning). Bearer auth jest gotowe na 7.x.
 - `esc_period` z makrem uzytkownika nie jest walidowane (nie da sie).
