@@ -252,61 +252,67 @@ func expandAction(d *schema.ResourceData) *Action {
 
 	// Expand conditions
 	if rawConds, ok := d.GetOk("condition"); ok {
-		rawList := rawConds.([]interface{})
-		conds := make([]ActionCondition, len(rawList))
-		for i, item := range rawList {
-			m := item.(map[string]interface{})
-			conds[i] = ActionCondition{
-				ConditionType: strconv.Itoa(m["conditiontype"].(int)),
-				Operator:      strconv.Itoa(m["operator"].(int)),
-				Value:         m["value"].(string),
-			}
-		}
-		action.Filter.Conditions = conds
+		action.Filter.Conditions = expandActionConditions(rawConds.([]interface{}))
 	}
 
 	// Expand operations
 	if rawOps, ok := d.GetOk("operation"); ok {
-		rawList := rawOps.([]interface{})
-		ops := make([]ActionOperation, len(rawList))
-		for i, item := range rawList {
-			m := item.(map[string]interface{})
-			op := ActionOperation{
-				OperationType: strconv.Itoa(m["operationtype"].(int)),
-				EscPeriod:     m["esc_period"].(string),
-				EscStepFrom:   strconv.Itoa(m["esc_step_from"].(int)),
-				EscStepTo:     strconv.Itoa(m["esc_step_to"].(int)),
-			}
-
-			// Configure message settings
-			defaultMsg := "1"
-			if !m["default_msg"].(bool) {
-				defaultMsg = "0"
-			}
-
-			op.OpMessage = &ActionOpMessage{
-				MediaTypeID: m["mediatypeid"].(string),
-				DefaultMsg:  defaultMsg,
-				Subject:     m["subject"].(string),
-				Message:     m["message"].(string),
-			}
-
-			// Configure user groups to alert
-			if grps, ok := m["user_groups"]; ok {
-				grpSet := grps.(*schema.Set)
-				var opGrps []ActionOpMessageGrp
-				for _, g := range grpSet.List() {
-					opGrps = append(opGrps, ActionOpMessageGrp{
-						Usrgrpid: g.(string),
-					})
-				}
-				op.OpMessageGrp = opGrps
-			}
-
-			ops[i] = op
-		}
-		action.Operations = ops
+		action.Operations = expandActionOperations(rawOps.([]interface{}))
 	}
 
 	return action
+}
+
+func expandActionConditions(rawList []interface{}) []ActionCondition {
+	conds := make([]ActionCondition, len(rawList))
+	for i, item := range rawList {
+		m := item.(map[string]interface{})
+		conds[i] = ActionCondition{
+			ConditionType: strconv.Itoa(m["conditiontype"].(int)),
+			Operator:      strconv.Itoa(m["operator"].(int)),
+			Value:         m["value"].(string),
+		}
+	}
+	return conds
+}
+
+func expandActionOperations(rawList []interface{}) []ActionOperation {
+	ops := make([]ActionOperation, len(rawList))
+	for i, item := range rawList {
+		m := item.(map[string]interface{})
+		op := ActionOperation{
+			OperationType: strconv.Itoa(m["operationtype"].(int)),
+			EscPeriod:     m["esc_period"].(string),
+			EscStepFrom:   strconv.Itoa(m["esc_step_from"].(int)),
+			EscStepTo:     strconv.Itoa(m["esc_step_to"].(int)),
+		}
+
+		// Configure message settings
+		defaultMsg := "1"
+		if !m["default_msg"].(bool) {
+			defaultMsg = "0"
+		}
+
+		op.OpMessage = &ActionOpMessage{
+			MediaTypeID: m["mediatypeid"].(string),
+			DefaultMsg:  defaultMsg,
+			Subject:     m["subject"].(string),
+			Message:     m["message"].(string),
+		}
+
+		// Configure user groups to alert
+		if grps, ok := m["user_groups"]; ok {
+			grpSet := grps.(*schema.Set)
+			var opGrps []ActionOpMessageGrp
+			for _, g := range grpSet.List() {
+				opGrps = append(opGrps, ActionOpMessageGrp{
+					Usrgrpid: g.(string),
+				})
+			}
+			op.OpMessageGrp = opGrps
+		}
+
+		ops[i] = op
+	}
+	return ops
 }

@@ -143,20 +143,23 @@ func resourceHostDelete(ctx context.Context, d *schema.ResourceData, m interface
 // Helper to convert set/list interfaces to string slices
 func getStringList(d *schema.ResourceData, key string) []string {
 	var list []string
-	if v, ok := d.GetOk(key); ok {
-		switch val := v.(type) {
-		case []interface{}:
-			for _, item := range val {
-				if str, ok := item.(string); ok {
-					list = append(list, str)
-				}
-			}
-		case *schema.Set:
-			for _, item := range val.List() {
-				if str, ok := item.(string); ok {
-					list = append(list, str)
-				}
-			}
+	v, ok := d.GetOk(key)
+	if !ok {
+		return list
+	}
+	switch val := v.(type) {
+	case []interface{}:
+		return appendItems(list, val)
+	case *schema.Set:
+		return appendItems(list, val.List())
+	}
+	return list
+}
+
+func appendItems(list []string, items []interface{}) []string {
+	for _, item := range items {
+		if str, ok := item.(string); ok {
+			list = append(list, str)
 		}
 	}
 	return list
