@@ -15,8 +15,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
-// SupportedVersionPrefix is the Zabbix API version line the provider is tested against.
+// SupportedVersionPrefix is the primary Zabbix API version line the provider
+// targets; SupportedVersionPrefixes lists every line the CI acceptance matrix
+// exercises.
 const SupportedVersionPrefix = "6.4"
+
+var SupportedVersionPrefixes = []string{"6.4", "7.0"}
 
 // configureTimeout bounds the version check and authentication performed
 // while configuring the provider.
@@ -89,6 +93,9 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	// URL validation and the transport warnings come first so that every later
 	// error (missing credentials, TLS conflicts, failed probes) still carries
 	// e.g. the plain-HTTP warning about secrets sent in clear text.
+	if cfg.URL == "" {
+		return nil, diag.Errorf("url must be configured (or the ZABBIX_URL environment variable)")
+	}
 	u, err := url.Parse(cfg.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, diag.Errorf("url is not a valid http(s) URL")
@@ -229,21 +236,26 @@ func plainHTTPWarning(rawURL string) diag.Diagnostics {
 // relies on, only exists since 6.4.1 (ZBXNEXT-8012). Other version lines are
 // untested and produce a warning.
 func versionDiagnostics(version string) diag.Diagnostics {
-	if rest, ok := strings.CutPrefix(version, SupportedVersionPrefix+"."); ok {
+	for _, prefix := range SupportedVersionPrefixes {
+		rest, ok := strings.CutPrefix(version, prefix+".")
+		if !ok {
+			continue
+		}
 		// Only a plain numeric patch level counts as a tested release; anything
 		// else (release candidates, betas) falls through to the untested
 		// warning instead of silently passing the gate (fail-closed).
 		if patch, err := strconv.Atoi(rest); err == nil {
-			if patch < 1 {
-				return diag.Errorf("Zabbix %s is not supported; the minimum supported release is %s.1 (6.4.0 cannot validate API tokens - ZBXNEXT-8012)", version, SupportedVersionPrefix)
+			if prefix == "6.4" && patch < 1 {
+				return diag.Errorf("Zabbix %s is not supported; the minimum supported 6.4 release is 6.4.1 (6.4.0 cannot validate API tokens - ZBXNEXT-8012)", version)
 			}
 			return nil
 		}
 	}
+	tested := strings.Join(SupportedVersionPrefixes, ".x and ") + ".x"
 	return diag.Diagnostics{{
 		Severity: diag.Warning,
 		Summary:  "Untested Zabbix version",
-		Detail:   fmt.Sprintf("This provider is tested against Zabbix %s.x; the server reports %s. Some features may behave unexpectedly; zabbix_action requires 6.4 or newer (pause_symptoms is always sent).", SupportedVersionPrefix, version),
+		Detail:   fmt.Sprintf("This provider is tested against Zabbix %s; the server reports %s. Some features may behave unexpectedly; zabbix_action requires 6.4 or newer (pause_symptoms is always sent).", tested, version),
 	}}
 }
 

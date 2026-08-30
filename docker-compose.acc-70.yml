@@ -1,0 +1,7 @@
+# Zabbix 7.0 LTS overlay for the acceptance matrix:
+#   docker compose -f docker-compose.acc.yml -f docker-compose.acc-70.yml up -d --wait
+services:
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.0.30@sha256:ae22510b336b37bf0e721be418c69ee8cad35d432954eba5a0d298348771b71c
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.30@sha256:f30732da18993807fb3b3d8571d179bb32b6e391d4e2ab82dd5e132ce33b3325

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -500,6 +501,13 @@ func TestActionApplyValidation_RejectsResolvedConflicts(t *testing.T) {
 	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "default_msg = false") {
 		t.Fatalf("the same conflict must fail before update, got %v", diags)
 	}
+
+	// An eventsource that resolved to a non-trigger source at apply time.
+	rawES := map[string]interface{}{"name": "a", "eventsource": 1,
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawES), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "eventsource 1 is not supported") {
+		t.Fatalf("a resolved non-trigger eventsource must fail before create, got %v", diags)
+	}
 }
 
 func TestActionUpdate_RefusesExternalUnmanagedShapes(t *testing.T) {
@@ -630,6 +638,39 @@ func TestPartialStateOnFailedUpdates(t *testing.T) {
 				t.Fatalf("planned values must not be written to state after a failed update, got %+v", st.Attributes)
 			}
 		})
+	}
+}
+
+func TestHostUpdate_FailedFinalReadSurfacesError(t *testing.T) {
+	// The mutations succeeded but the confirming Read fails on transport: the
+	// error must surface with the ID kept. Partial mode is already off at
+	// that point, so the planned values persist until the next refresh
+	// reconciles them - inherent to SDKv2 and acceptable, because the
+	// mutation itself DID succeed.
+	var gets atomic.Int32
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.get":
+			if gets.Add(1) == 1 { // update preflight
+				return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+					"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+					"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`), nil
+			}
+			return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: "db down"}
+		case "host.update":
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "hostinterface.update":
+			return map[string][]string{"interfaceids": {"5"}}, nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": "192.0.2.9"})
+	d.SetId("1")
+	diags := resourceHost().UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || d.Id() != "1" {
+		t.Fatalf("a failing final read must surface an error and keep the ID, got %v id=%q", diags, d.Id())
 	}
 }
 

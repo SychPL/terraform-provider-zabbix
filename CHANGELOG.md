@@ -21,9 +21,11 @@
 
 - Read no longer removes a resource from state on transport errors, timeouts
   or expired sessions; only a confirmed "not found" does, and that is reported
-  as a warning in the plan output. Requests are strictly single-shot (no
-  transparent retries) and the JSON-RPC envelope is validated before any
-  error handling.
+  as a warning in the plan output. Requests are single-shot on transport
+  errors (never replayed); the one exception is a session rejected as
+  expired, which is renewed and the rejected request repeated exactly once
+  (Zabbix refuses such requests before executing anything). The JSON-RPC
+  envelope is validated before any error handling.
 - `zabbix_host` updates no longer replace the whole interface collection
   (which deleted SNMP/IPMI/JMX interfaces); the main agent interface is updated
   with `hostinterface.update`, and recreated with `hostinterface.create` when
@@ -95,6 +97,9 @@
   between the preflight read and the delete no longer fails the apply.
 - Webhook parameter names are validated at plan time; raw-config reads are
   guarded against partial objects.
+- A missing `url` reports "url must be configured" instead of a misleading
+  format error; `dns` length is counted in characters, not bytes; the
+  standard Go proxy environment is documented in the README.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 
@@ -110,6 +115,8 @@
   credentials) are reported even when configure fails.
 - `zabbix_action.pause_symptoms` (pause escalation for symptom problems,
   Zabbix 6.4).
+- The CI acceptance matrix covers Zabbix 7.0 LTS next to 6.4; 7.0.x no
+  longer triggers the "untested" warning.
 - `api_token` authentication (Bearer header, validated at configure time with
   `user.checkAuthentication`, independent of the token's method permissions),
   `tls_insecure` (warns when active), `ca_cert_file` (added to the system

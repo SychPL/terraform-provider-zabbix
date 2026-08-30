@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -218,7 +219,7 @@ func validateDNS(v interface{}, k string) ([]string, []error) {
 	if s == "" || userMacroRe.MatchString(s) {
 		return nil, nil
 	}
-	if len(s) > 255 || strings.ContainsAny(s, " \t") {
+	if utf8.RuneCountInString(s) > 255 || strings.ContainsAny(s, " \t") {
 		return nil, []error{fmt.Errorf("%s: %q is not a valid DNS name or user macro", k, s)}
 	}
 	return nil, nil

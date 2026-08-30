@@ -7,7 +7,8 @@ description: |-
 
 # zabbix Provider
 
-Manages Zabbix objects through the JSON-RPC API. Tested against Zabbix 6.4;
+Manages Zabbix objects through the JSON-RPC API. Tested against Zabbix 6.4
+and 7.0 LTS (acceptance matrix in CI);
 6.4.0 is rejected at configure time (it cannot validate API tokens) and other
 version lines produce an "untested" warning. Every CRUD operation defaults to
 a 2-minute timeout; raise it per resource with a `timeouts` block

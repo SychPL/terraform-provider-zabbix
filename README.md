@@ -3,7 +3,8 @@
 [![CI](https://github.com/Tensai123/terraform-provider-zabbix/actions/workflows/ci.yml/badge.svg)](https://github.com/Tensai123/terraform-provider-zabbix/actions/workflows/ci.yml)
 
 A Terraform provider for managing Zabbix objects through the JSON-RPC API.
-Tested against **Zabbix 6.4** (see [docker-compose.acc.yml](docker-compose.acc.yml)).
+Tested against **Zabbix 6.4 and 7.0 LTS** (acceptance matrix in CI, see
+[docker-compose.acc.yml](docker-compose.acc.yml)).
 Zabbix 6.4.1 or newer is required: 6.4.0 cannot validate API tokens
 (`user.checkAuthentication` gained its `token` parameter in 6.4.1) and is
 rejected at configure time; other version lines produce an "untested" warning.
@@ -72,8 +73,11 @@ Terraform state. Use an encrypted, access-controlled state backend.
 ## Behaviour worth knowing
 
 - **Read errors never drop resources from state.** Only a confirmed "not found"
-  (empty API result) removes a resource; transport errors, timeouts and expired
-  sessions are surfaced as errors. Note that Zabbix returns an empty result also
+  (empty API result) removes a resource; transport errors and timeouts are
+  surfaced as errors. An expired session is renewed once for username/password
+  authentication and the rejected request repeated (safe: Zabbix refuses such
+  requests before executing anything); the error surfaces only when the
+  re-login or the repeated request fails. Note that Zabbix returns an empty result also
   when the user has no permission to see the object. The same applies to
   `terraform destroy`: an object the credentials can no longer see is treated
   as already deleted (the Zabbix API cannot distinguish the two cases), so use
@@ -97,6 +101,10 @@ Terraform state. Use an encrypted, access-controlled state backend.
 - Every CRUD operation defaults to a 2-minute timeout; raise it per resource
   with a `timeouts` block (e.g. `timeouts { create = "15m" }`) when an apply
   links large templates.
+- Standard Go proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) are
+  honoured: API traffic - including credentials and tokens - then flows
+  through the configured proxy. Unset them (or use `NO_PROXY`) when the
+  Zabbix API must be reached directly.
 - The provider authenticates every request with an `Authorization: Bearer`
   header only. If configure succeeds but mutations fail with "Not authorized",
   a proxy in front of Zabbix is probably stripping the header (compare

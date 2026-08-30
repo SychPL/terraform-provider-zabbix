@@ -73,6 +73,7 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"token rejected", map[string]interface{}{"url": s.URL, "api_token": "bad"}, "api_token was rejected", ""},
 		{"user+pass ok", map[string]interface{}{"url": s.URL, "username": "u", "password": "p"}, "", ""},
 		{"bad url", map[string]interface{}{"url": "ftp://x", "api_token": "t"}, "not a valid http(s) URL", ""},
+		{"missing url", map[string]interface{}{"api_token": "t"}, "url must be configured", ""},
 		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret-pw@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
 		{"query in url", map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php?sid=s3cret-pw", "api_token": "t"}, "query string", ""},
 		{"tls_insecure with ca_cert_file", map[string]interface{}{"url": s.URL, "api_token": "t", "tls_insecure": true, "ca_cert_file": "ca.pem"}, "mutually exclusive", "TLS certificate verification is disabled"},
@@ -205,7 +206,7 @@ func TestProviderConfigure_WarnsOnUntestedVersion(t *testing.T) {
 		if req.Method == "user.checkAuthentication" {
 			return map[string]string{"userid": "1"}, nil
 		}
-		return "7.0.3", nil
+		return "7.2.3", nil
 	})
 	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": s.URL, "api_token": "t"})
 	_, diags := providerConfigure(context.Background(), d)
@@ -241,6 +242,12 @@ func TestPlainHTTPWarning(t *testing.T) {
 	}
 	if w := versionDiagnostics("6.4.0"); !w.HasError() {
 		t.Errorf("6.4.0 must be rejected, got %v", w)
+	}
+	if w := versionDiagnostics("7.0.30"); len(w) != 0 {
+		t.Errorf("7.0 LTS is part of the acceptance matrix and must not warn, got %v", w)
+	}
+	if w := versionDiagnostics("7.2.3"); len(w) != 1 || w.HasError() {
+		t.Errorf("7.2 must warn as untested, got %v", w)
 	}
 	if w := versionDiagnostics("6.4.0rc1"); len(w) != 1 || w.HasError() {
 		t.Errorf("an unparsable 6.4 patch level must warn as untested, never silently pass, got %v", w)

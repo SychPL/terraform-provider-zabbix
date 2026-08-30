@@ -32,7 +32,8 @@ Poza zakresem (v0.3+), decyzje z recenzji:
 - publikacja w Registry (sam cut-release); namespace ujednolicony na `Tensai123` (repo wydajace artefakty)
 
 Wersja docelowa API: Zabbix 6.4. Naglowek `Authorization: Bearer` (wspierany od 6.4)
-zamiast pola `auth` w body - kompatybilny z 7.x.
+zamiast pola `auth` w body - kompatybilny z 7.x. Od rundy 22 macierz akceptacji CI
+obejmuje takze 7.0 LTS (6.4 jest EOL); `SupportedVersionPrefixes` = {6.4, 7.0}.
 
 ## 3. Wymagania i status
 
@@ -166,6 +167,9 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | P4 | P2 | Minimalna wersja: 6.4.0 odrzucane w configure (brak `token` w `user.checkAuthentication` przed 6.4.1, ZBXNEXT-8012); inne linie = warning | `TestProviderConfigure_RejectsZabbix640`, `TestPlainHTTPWarning` | DONE |
 | P5 | P3 | Zrodlo credentiali (HCL vs env) rozstrzygane po `GetRawConfig` (fallback: porownanie z env w harnessie testowym), nie po rownosci wartosci; warningi towarzysza bledom configure (operator widzi np. warning o plain HTTP takze gdy configure pada); sciezki bledow configure (apiinfo.version, user.login) pokryte testami | `TestWrittenInRaw`, `TestProviderConfigure_ConfigureErrorPaths`, przypadek "remote http warns" w `TestProviderConfigure_AuthValidation` | DONE |
 | P6 | P1 | Update w trybie partial: SDKv2 zapisuje planowane wartosci do stanu mimo bledu update (udokumentowane w `ResourceData.Partial`) - poprzedni stan zachowany do potwierdzenia mutacji, `Partial(false)` przed koncowym Read (Codex r13) | asercja stanu w `TestHostUpdate_PartialFailureKeepsID` | DONE |
+| P18 | P3 | `eventsource` sprawdzane takze na wartosci ROZWIAZANEJ (unknown w planie nie wysle nietriggerowej akcji do API); opisy retry doprecyzowane: single-shot dotyczy bledow transportu, jedyny wyjatek to pojedyncze powtorzenie zadania odrzuconego przez wygasla sesje (Codex r22) | rozszerzony `TestActionApplyValidation_RejectsResolvedConflicts`, README i CHANGELOG | DONE |
+| P17 | P2 | Macierz akceptacji CI: Zabbix 6.4.21 i 7.0.30 LTS (overlay digest-pinned); `SupportedVersionPrefixes` = {6.4, 7.0} - 7.0.x bez warningu, gate 6.4.1 bez zmian; jawny blad przy braku `url`; `validateDNS` liczy znaki (IDN), nie bajty; proxy z env (HTTPS_PROXY) udokumentowane w README (GLM r22) | matrix w ci.yml, `TestPlainHTTPWarning` (7.0.30/7.2.3), przypadek "missing url" | DONE |
+| T15 | P3 | Acceptance: zmiana typu email->webhook z asercja wyczyszczonych credentiali PO STRONIE API; `ip`+`dns` jednoczesnie + przelaczenie `use_ip`; unit: udany update z padajacym finalnym Read (blad widoczny, ID zachowane; zapis planned values do nastepnego refresh to wlasciwosc SDKv2) (GLM r22) | kroki w `TestAccMediaType_email` i `TestAccHost_lifecycle`, `TestHostUpdate_FailedFinalReadSurfacesError` | DONE |
 | P16 | P2 | Domkniecie walidacji rozwiazanych wartosci: `event_menu_url`/`event_menu_name` przy `show_event_menu` rozwiazanym do false = blad; pusty token z `user.login` odrzucany (zadne zadanie nie wychodzi cicho bez naglowka Authorization); precheck acceptance odrzuca komplet obu metod auth w srodowisku (Codex r19) | `TestCall_EmptyLoginTokenRejected`, przypadek webhook w `TestMediaTypeApplyValidation_RejectsResolvedConflicts` | DONE |
 | P15 | P1 | `Partial(true)` od PIERWSZEJ instrukcji kazdego Update (blad walidacji lub preflightu przed mutacja tez nie moze zapisac planowanych wartosci); preflight update akcji przez pelny `flattenAction` (Update odmawia dokladnie tego co Read); `ClearParameters` liczone z AKTUALNEGO typu w API, nie z planu; pola obcego typu media sprawdzane ponownie po rozwiazaniu `type` (raw config); warningi transportowe zbierane przed wczesnymi bledami configure (Codex r18) | `TestActionUpdate_RefusesExternalUnmanagedShapes`, `TestMediaTypeUpdate_ClearsParametersOnExternalTypeDrift`, `TestForeignMediaTypeFields_ResolvedType`, przypadki "no credentials remote http" i "tls_insecure with ca_cert_file" | DONE |
 | P12 | P1 | Walidacje cross-field powtorzone na wartosciach ROZWIAZANYCH w Create/Update (CustomizeDiff musi pomijac unknown): adres hosta (pole skonfigurowane a puste = blad, nie cichy host bez interfejsu), operacje/warunki akcji, wymagania per-typ media type z parowaniem credentiali (Codex r17) | `TestHostApplyValidation_RejectsInvalidResolvedValues`, `TestActionApplyValidation_RejectsResolvedConflicts`, `TestMediaTypeApplyValidation_RejectsResolvedConflicts` | DONE |
@@ -252,7 +256,8 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   akceptacji samym tokenem jest pomijany.
 - `zabbix_host` zarzadza tylko glownym interfejsem agenta (tworzy go, gdy brak); pozostale interfejsy sa nietykane;
   v0.3: blok `interface` (lista).
-- Zabbix 6.4 jest EOL; 7.0 LTS nietestowane (warning). Bearer auth jest gotowe na 7.x.
+- Zabbix 6.4 jest EOL; od r22 akceptacja CI obejmuje takze 7.0 LTS (matrix,
+  `docker-compose.acc-70.yml`); linie inne niz 6.4/7.0 = warning "untested".
 - Sciezka restricted `mediatype.get` pokryta fixturem jednostkowym; wariant akceptacyjny
   z realnym uzytkownikiem nie-Super-Admin oraz akceptacja na 7.0 LTS = zakres v0.3.
 - `esc_period` z makrem uzytkownika nie jest walidowane (nie da sie).

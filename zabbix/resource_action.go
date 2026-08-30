@@ -281,6 +281,12 @@ func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ in
 // the final data again before mutating (e.g. a default_msg that resolved to
 // true next to a static subject must fail, not silently drop the subject).
 func validateActionValues(d *schema.ResourceData) error {
+	if es := d.Get("eventsource").(int); es != 0 {
+		// The schema restricts eventsource to 0, but an unknown reference can
+		// resolve to anything at apply time; fail locally instead of sending
+		// an unsupported action shape to the API.
+		return fmt.Errorf("eventsource %d is not supported (only 0, trigger actions)", es)
+	}
 	for _, raw := range d.Get("condition").(*schema.Set).List() {
 		c := raw.(map[string]interface{})
 		ct := c["conditiontype"].(int)

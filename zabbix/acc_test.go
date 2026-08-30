@@ -262,6 +262,41 @@ resource "zabbix_host" "h" {
 				),
 			},
 			{
+				// ip and dns configured together: the unused address must be
+				// preserved end to end.
+				Config: base + fmt.Sprintf(`
+resource "zabbix_host" "h" {
+  host    = "%s-renamed"
+  enabled = false
+  groups  = [zabbix_host_group.g.id]
+  ip      = "192.0.2.13"
+  dns     = "agent.example.test"
+  use_ip  = true
+}`, name),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zabbix_host.h", "ip", "192.0.2.13"),
+					resource.TestCheckResourceAttr("zabbix_host.h", "dns", "agent.example.test"),
+					resource.TestCheckResourceAttr("zabbix_host.h", "use_ip", "true"),
+				),
+			},
+			{
+				// Flipping use_ip keeps both addresses.
+				Config: base + fmt.Sprintf(`
+resource "zabbix_host" "h" {
+  host    = "%s-renamed"
+  enabled = false
+  groups  = [zabbix_host_group.g.id]
+  ip      = "192.0.2.13"
+  dns     = "agent.example.test"
+  use_ip  = false
+}`, name),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zabbix_host.h", "use_ip", "false"),
+					resource.TestCheckResourceAttr("zabbix_host.h", "ip", "192.0.2.13"),
+					resource.TestCheckResourceAttr("zabbix_host.h", "dns", "agent.example.test"),
+				),
+			},
+			{
 				// User macro as the agent port must round-trip through the API.
 				Config: base + fmt.Sprintf(`
 resource "zabbix_host" "h" {
@@ -478,6 +513,27 @@ resource "zabbix_media_type" "mail" {
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_port", "2525"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "password", "hunter3"),
 			)},
+			// Switching away from email must clear the SMTP credentials in
+			// Zabbix itself, not only in the Terraform state.
+			{Config: testAccProviderConfig() + fmt.Sprintf(`
+resource "zabbix_media_type" "mail" {
+  name   = %q
+  type   = 4
+  script = "return 'OK';"
+}`, name), Check: func(s *terraform.State) error {
+				id, err := stateID(s, "zabbix_media_type.mail")
+				if err != nil {
+					return err
+				}
+				mt, err := testAccClient(t).GetMediaType(context.Background(), id)
+				if err != nil {
+					return err
+				}
+				if mt.Passwd != "" || mt.Username != "" {
+					return fmt.Errorf("SMTP credentials must be cleared on a type change, got user=%q passwd-set=%v", mt.Username, mt.Passwd != "")
+				}
+				return nil
+			}},
 			{ResourceName: "zabbix_media_type.mail", ImportState: true, ImportStateVerify: true},
 		},
 	})

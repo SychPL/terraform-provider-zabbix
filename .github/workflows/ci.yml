@@ -102,12 +102,21 @@ jobs:
         run: go test -count=1 ./...
 
   acceptance:
-    name: Acceptance tests (Zabbix 6.4)
+    name: Acceptance tests (Zabbix ${{ matrix.zabbix }})
     runs-on: ubuntu-latest
     needs: [unit, unit-windows]
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - zabbix: "6.4"
+            compose: "-f docker-compose.acc.yml"
+          - zabbix: "7.0"
+            compose: "-f docker-compose.acc.yml -f docker-compose.acc-70.yml"
     env:
       TF_ACC: "1"
+      COMPOSE: ${{ matrix.compose }}
       ZABBIX_URL: http://localhost:8082/api_jsonrpc.php
       ZABBIX_USERNAME: Admin
       ZABBIX_PASSWORD: zabbix
@@ -122,7 +131,7 @@ jobs:
           terraform_version: "1.9.8"
           terraform_wrapper: false
       - name: Start Zabbix
-        run: docker compose -f docker-compose.acc.yml up -d --wait --wait-timeout 300
+        run: docker compose ${COMPOSE} up -d --wait --wait-timeout 300
       - name: Wait for API
         run: |
           for i in $(seq 1 60); do
@@ -131,28 +140,28 @@ jobs:
                  "$ZABBIX_URL" | grep -q '"result"'; then exit 0; fi
             sleep 5
           done
-          docker compose -f docker-compose.acc.yml logs --tail 50; exit 1
+          docker compose ${COMPOSE} logs --tail 50; exit 1
       - name: Wait for Zabbix server startup
         # The server runs DB maintenance on first start; API writes (e.g. host
         # creation with templates) block on those locks until it is done.
         run: |
           for i in $(seq 1 60); do
-            if docker compose -f docker-compose.acc.yml logs zabbix-server 2>/dev/null | grep -q 'server #0 started'; then exit 0; fi
+            if docker compose ${COMPOSE} logs zabbix-server 2>/dev/null | grep -q 'server #0 started'; then exit 0; fi
             sleep 5
           done
-          docker compose -f docker-compose.acc.yml logs --tail 50 zabbix-server; exit 1
+          docker compose ${COMPOSE} logs --tail 50 zabbix-server; exit 1
       - name: Analyze database
         # A freshly initialised PostgreSQL has no planner statistics; Zabbix's
         # template unlink queries then take minutes instead of milliseconds.
-        run: docker compose -f docker-compose.acc.yml exec -T zabbix-db psql -U zabbix -q -c "ANALYZE"
+        run: docker compose ${COMPOSE} exec -T zabbix-db psql -U zabbix -q -c "ANALYZE"
       - name: Acceptance tests
         run: go test -count=1 -timeout 30m -run 'TestAcc' -v ./zabbix
       - name: Zabbix logs
         if: failure()
         run: |
-          docker compose -f docker-compose.acc.yml exec -T zabbix-db psql -U zabbix -c "select pid, state, wait_event_type, wait_event, now()-xact_start as xact_age, left(query,160) as query from pg_stat_activity where datname='zabbix' and xact_start is not null order by xact_start" || true
-          docker compose -f docker-compose.acc.yml logs --tail 300 zabbix-db
-          docker compose -f docker-compose.acc.yml logs --tail 100 zabbix-server
+          docker compose ${COMPOSE} exec -T zabbix-db psql -U zabbix -c "select pid, state, wait_event_type, wait_event, now()-xact_start as xact_age, left(query,160) as query from pg_stat_activity where datname='zabbix' and xact_start is not null order by xact_start" || true
+          docker compose ${COMPOSE} logs --tail 300 zabbix-db
+          docker compose ${COMPOSE} logs --tail 100 zabbix-server
       - name: Stop Zabbix
         if: always()
-        run: docker compose -f docker-compose.acc.yml down -v
+        run: docker compose ${COMPOSE} down -v
