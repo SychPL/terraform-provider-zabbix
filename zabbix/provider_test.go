@@ -45,6 +45,16 @@ func TestProviderConfigure_Validation(t *testing.T) {
 			},
 			expectErr: "url must not contain a query string or fragment",
 		},
+		{
+			name: "TLS Insecure and CA Cert conflict",
+			inputRaw: map[string]interface{}{
+				"url":          "http://localhost/zabbix/api_jsonrpc.php",
+				"api_token":    "token123",
+				"tls_insecure": true,
+				"ca_cert_file": "/path/to/ca.pem",
+			},
+			expectErr: "tls_insecure and ca_cert_file are mutually exclusive",
+		},
 	}
 
 	for _, tc := range cases {

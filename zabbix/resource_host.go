@@ -32,9 +32,10 @@ func resourceHost() *schema.Resource {
 				Description: "List of Zabbix Template IDs to link to this host",
 			},
 			"ip": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Description: "IP address of the host agent interface",
+				Type:         schema.TypeString,
+				Optional:     true,
+				ValidateFunc: validateIP,
+				Description:  "IP address of the host agent interface",
 			},
 			"dns": {
 				Type:        schema.TypeString,

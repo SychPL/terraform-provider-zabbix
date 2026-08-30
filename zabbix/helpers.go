@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 
@@ -136,4 +137,13 @@ func validatePort(v interface{}, k string) ([]string, []error) {
 		return nil, []error{fmt.Errorf("%s must be a port between 1 and 65535 or a user macro, got %q", k, s)}
 	}
 	return nil, nil
+}
+
+// validateIP checks that ip is a valid IP address, a user macro, or empty.
+func validateIP(v interface{}, k string) ([]string, []error) {
+	s := v.(string)
+	if s == "" || userMacroRe.MatchString(s) || net.ParseIP(s) != nil {
+		return nil, nil
+	}
+	return nil, []error{fmt.Errorf("%s must be a valid IP address or a user macro, got %q", k, s)}
 }

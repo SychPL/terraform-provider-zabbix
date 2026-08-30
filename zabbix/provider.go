@@ -84,6 +84,9 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	if u.RawQuery != "" || u.Fragment != "" {
 		return nil, diag.Errorf("url must not contain a query string or fragment")
 	}
+	if tlsInsecure && caCertFile != "" {
+		return nil, diag.Errorf("tls_insecure and ca_cert_file are mutually exclusive")
+	}
 
 	client, err := NewZabbixClient(urlStr, username, password, apiToken, tlsInsecure, caCertFile)
 	if err != nil {
