@@ -359,6 +359,18 @@ func TestProviderConfigure_IncompleteCredentialsWithEnvToken(t *testing.T) {
 	}
 }
 
+func TestProviderConfigure_ExplicitPasswordConflictsWithExplicitToken(t *testing.T) {
+	// api_token and password in HCL, username from the environment: the
+	// explicit password must not be silently discarded in favour of the token.
+	clearProviderEnv(t)
+	t.Setenv("ZABBIX_USERNAME", "Admin")
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php", "api_token": "t", "password": "p"})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "mutually exclusive") {
+		t.Fatalf("an explicit password next to an explicit token must be a conflict, got %v", diags)
+	}
+}
+
 func TestProviderConfigure_BothAmbientMethodsConflict(t *testing.T) {
 	clearProviderEnv(t)
 	t.Setenv("ZABBIX_API_TOKEN", "envtok")

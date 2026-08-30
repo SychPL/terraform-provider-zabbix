@@ -3,12 +3,12 @@
 page_title: "zabbix_media_type Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix media type (email, script, SMS or webhook). Attributes of other types are rejected at plan time; changing type resets the previous type's attributes in Zabbix (including credentials). All attributes of the configured type are managed authoritatively: after terraform import, reproduce the full configuration (TLS, authentication, credentials, webhook parameters) before the first apply.
+  Manages a Zabbix media type (email, script, SMS or webhook). Attributes of other types are rejected at plan time; changing type resets the previous type's attributes in Zabbix (including credentials). All attributes of the configured type are managed authoritatively: after terraform import, reproduce the full configuration (TLS, authentication, credentials, webhook parameters) and review the plan before the first apply. Requires a Super Admin role: since Zabbix 6.4.19 other roles receive only a restricted field set from the API and the provider refuses such reads.
 ---
 
 # zabbix_media_type (Resource)
 
-Manages a Zabbix media type (email, script, SMS or webhook). Attributes of other types are rejected at plan time; changing `type` resets the previous type's attributes in Zabbix (including credentials). All attributes of the configured type are managed authoritatively: after `terraform import`, reproduce the full configuration (TLS, authentication, credentials, webhook parameters) before the first apply.
+Manages a Zabbix media type (email, script, SMS or webhook). Attributes of other types are rejected at plan time; changing `type` resets the previous type's attributes in Zabbix (including credentials). All attributes of the configured type are managed authoritatively: after `terraform import`, reproduce the full configuration (TLS, authentication, credentials, webhook parameters) and review the plan before the first apply. Requires a Super Admin role: since Zabbix 6.4.19 other roles receive only a restricted field set from the API and the provider refuses such reads.
 
 ## Example Usage
 

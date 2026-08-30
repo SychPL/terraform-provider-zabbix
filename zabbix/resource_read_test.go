@@ -241,6 +241,20 @@ func TestActionRead_RefusesUnknownConditionOperator(t *testing.T) {
 	}
 }
 
+func TestActionRead_RefusesRecoveryAndUpdateOperations(t *testing.T) {
+	base := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
+	for _, field := range []string{"recovery_operations", "update_operations"} {
+		fixture := strings.Replace(base, `"operations":[`, `"`+field+`":[{"operationid":"99"}],"operations":[`, 1)
+		c := fixtureServer(t, "action.get", fixture)
+		d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{})
+		d.SetId("10")
+		diags := resourceAction().ReadContext(context.Background(), d, c)
+		if !diags.HasError() || !strings.Contains(diags[0].Summary, "recovery or update operations") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+			t.Fatalf("%s must be refused with a state rm hint, got %v", field, diags)
+		}
+	}
+}
+
 func TestActionRead_RefusesOperationConditions(t *testing.T) {
 	fixture := strings.Replace(strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture),
 		`"opconditions":[]`, `"opconditions":[{"conditiontype":"14","operator":"0","value":"0"}]`, 1)
@@ -250,6 +264,19 @@ func TestActionRead_RefusesOperationConditions(t *testing.T) {
 	diags := resourceAction().ReadContext(context.Background(), d, c)
 	if !diags.HasError() || !strings.Contains(diags[0].Summary, "opconditions") || !strings.Contains(diags[0].Summary, "terraform state rm") {
 		t.Fatalf("operation conditions must be refused with a state rm hint, got %v", diags)
+	}
+}
+
+func TestMediaTypeRead_RefusesRestrictedResponse(t *testing.T) {
+	// Since 6.4.19 non-Super-Admin roles get only mediatypeid, name, type,
+	// status and maxattempts; adopting that would zero out the real
+	// configuration, so the read must fail and keep the state untouched.
+	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","name":"m","type":"0","status":"0","maxattempts":"3"}]`)
+	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+	d.SetId("9")
+	diags := resourceMediaType().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "Super Admin") || d.Id() != "9" {
+		t.Fatalf("a restricted mediatype.get response must be refused and keep the ID, got %v id=%q", diags, d.Id())
 	}
 }
 

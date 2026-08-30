@@ -13,7 +13,7 @@ import (
 func resourceAction() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix trigger action with \"send message\" operations. " +
-			"Recovery and update operations are not supported yet. " +
+			"Actions with recovery or update operations are refused (the provider cannot round-trip them). " +
 			"Every attribute is managed authoritatively: after `terraform import`, reproduce the full configuration (all conditions and operations, and non-default `enabled`, `esc_period`, `evaltype`, `pause_suppressed`, `pause_symptoms`, `notify_if_canceled`) and review the plan before the first apply - missing pieces are removed or reset.",
 		CreateContext: resourceActionCreate,
 		ReadContext:   resourceActionRead,
@@ -331,6 +331,9 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 	}
 	if evaltype == 3 {
 		return nil, fmt.Errorf("action uses a custom condition expression (evaltype 3) which this provider does not support; %s", unmanageableHint)
+	}
+	if len(action.RecoveryOperations) != 0 || len(action.UpdateOperations) != 0 {
+		return nil, fmt.Errorf("action has recovery or update operations which this provider does not support; %s", unmanageableHint)
 	}
 
 	conds := make([]interface{}, 0, len(action.Filter.Conditions))

@@ -84,6 +84,21 @@ jobs:
           # are skipped.
           args: release --snapshot --clean --skip=publish,sign
 
+  unit-windows:
+    name: Unit tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Unit tests
+        # goreleaser ships windows binaries; catch Windows-specific regressions
+        # (paths, CRLF, TLS store). -race needs cgo and already runs on Linux.
+        run: go test -count=1 ./...
+
   acceptance:
     name: Acceptance tests (Zabbix 6.4)
     runs-on: ubuntu-latest

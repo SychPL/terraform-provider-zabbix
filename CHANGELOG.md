@@ -51,6 +51,12 @@
   release candidate) gets the "untested" warning instead of silently passing.
 - JSON-RPC envelope: a present `error` member (even `null`) next to `result`
   is treated as malformed instead of a success.
+- Actions with recovery or update operations are refused at Read (previously
+  they were silently left unmanaged after an import).
+- A restricted `mediatype.get` response (non-Super-Admin roles since Zabbix
+  6.4.19) is a hard error instead of silently zeroing the configuration.
+- An explicit `password` next to an explicit `api_token` is a conflict even
+  when `username` comes from the environment.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 

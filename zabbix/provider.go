@@ -94,7 +94,8 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		// ZABBIX_* variables in CI): the explicitly configured one wins; two
 		// explicit methods (or two ambient ones) are a hard error.
 		tokenExplicit := attrWrittenInConfig(d, "api_token", "ZABBIX_API_TOKEN")
-		credsExplicit := attrWrittenInConfig(d, "username", "ZABBIX_USERNAME")
+		credsExplicit := attrWrittenInConfig(d, "username", "ZABBIX_USERNAME") ||
+			attrWrittenInConfig(d, "password", "ZABBIX_PASSWORD")
 		switch {
 		case tokenExplicit && !credsExplicit:
 			diags = append(diags, diag.Diagnostic{

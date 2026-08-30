@@ -168,6 +168,15 @@ CI fails when `docs/` is out of date.
 Tagging `v*` runs GoReleaser (see `.github/workflows/release.yml`), which builds,
 signs and publishes the binaries for the Terraform Registry.
 
+One-time repository setup the workflow relies on:
+
+- create the `release` environment and add **required reviewers** - the job
+  only pauses for approval (protecting the signing key) when the environment
+  is actually protected in the repository settings;
+- store `GPG_PRIVATE_KEY` / `GPG_PASSPHRASE` as **environment secrets** of
+  `release` (not repository secrets), so no other workflow can read them;
+- the workflow itself refuses tags that are not reachable from `main`.
+
 ## License
 
 See [LICENSE](LICENSE).

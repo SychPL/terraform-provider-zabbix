@@ -234,6 +234,11 @@ type Action struct {
 	NotifyIfCanceled string            `json:"notify_if_canceled"`
 	Filter           ActionFilter      `json:"filter"`
 	Operations       []ActionOperation `json:"operations"`
+	// Recovery/update operations are not modelled; they are read only so that
+	// Read can refuse actions carrying them (they cannot be round-tripped and
+	// would silently stay unmanaged after an import).
+	RecoveryOperations []json.RawMessage `json:"recovery_operations,omitempty"`
+	UpdateOperations   []json.RawMessage `json:"update_operations,omitempty"`
 }
 
 type ActionFilter struct {
@@ -814,14 +819,29 @@ func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType,
 			"description", "maxsessions", "maxattempts", "attempt_interval",
 			"content_type", "process_tags", "show_event_menu", "event_menu_url", "event_menu_name"},
 	}
-	var res []MediaType
-	if err := c.Call(ctx, "mediatype.get", params, &res); err != nil {
+	var raw []json.RawMessage
+	if err := c.Call(ctx, "mediatype.get", params, &raw); err != nil {
 		return nil, err
 	}
-	if len(res) == 0 {
+	if len(raw) == 0 {
 		return nil, ErrNotFound
 	}
-	return &res[0], nil
+	// Since Zabbix 6.4.19 non-Super-Admin roles receive only a restricted
+	// field set (mediatypeid, name, type, status, maxattempts). Treating the
+	// missing fields as empty would reset the real configuration on the next
+	// refresh or import, so a restricted response is a hard error instead.
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw[0], &probe); err != nil {
+		return nil, fmt.Errorf("failed to parse result: %w", err)
+	}
+	if _, ok := probe["smtp_server"]; !ok {
+		return nil, fmt.Errorf("mediatype.get returned a restricted field set; managing media types requires a Super Admin role (since Zabbix 6.4.19 other roles cannot read media type details)")
+	}
+	var mt MediaType
+	if err := json.Unmarshal(raw[0], &mt); err != nil {
+		return nil, fmt.Errorf("failed to parse result: %w", err)
+	}
+	return &mt, nil
 }
 
 func (c *ZabbixClient) UpdateMediaType(ctx context.Context, mt *MediaType) error {
@@ -873,6 +893,9 @@ func (c *ZabbixClient) GetAction(ctx context.Context, id string) (*Action, error
 		"output":           []string{"actionid", "name", "eventsource", "status", "esc_period", "pause_suppressed", "pause_symptoms", "notify_if_canceled"},
 		"selectFilter":     "extend",
 		"selectOperations": "extend",
+		// Read only for the refusal check in flattenAction.
+		"selectRecoveryOperations": "extend",
+		"selectUpdateOperations":   "extend",
 	}
 	var res []Action
 	if err := c.Call(ctx, "action.get", params, &res); err != nil {

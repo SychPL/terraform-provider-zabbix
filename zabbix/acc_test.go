@@ -94,13 +94,14 @@ func TestAccHostGroup_basic(t *testing.T) {
 // testAccCheckGone asserts the object no longer exists after destroy.
 func testAccCheckGone(t *testing.T, addr string, get func(*ZabbixClient, string) error) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		for k, rs := range s.RootModule().Resources {
-			if k != addr {
-				continue
-			}
-			if err := get(testAccClient(t), rs.Primary.ID); !errors.Is(err, ErrNotFound) {
-				return fmt.Errorf("%s %s still exists (err=%v)", addr, rs.Primary.ID, err)
-			}
+		rs, ok := s.RootModule().Resources[addr]
+		if !ok {
+			// A resource that vanished from state mid-test would make the
+			// destroy check pass vacuously while orphaning the object.
+			return fmt.Errorf("%s not present in the final state (lost mid-test?)", addr)
+		}
+		if err := get(testAccClient(t), rs.Primary.ID); !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("%s %s still exists (err=%v)", addr, rs.Primary.ID, err)
 		}
 		return nil
 	}
@@ -177,6 +178,38 @@ resource "zabbix_host" "h" {
 					resource.TestCheckResourceAttr("zabbix_host.h", "ip", "192.0.2.11"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "port", "10051"),
 					testAccCheckHostInterfaces(t, "zabbix_host.h", 2),
+				),
+			},
+			{
+				// External drift of the managed agent interface must be repaired
+				// by an apply of the unchanged configuration.
+				PreConfig: func() {
+					host, err := testAccClient(t).GetHost(context.Background(), hostID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					iface := host.AgentInterface()
+					if iface == nil {
+						t.Fatal("expected an agent interface")
+					}
+					params := map[string]interface{}{"interfaceid": iface.InterfaceID, "port": "10099"}
+					if err := testAccClient(t).Call(context.Background(), "hostinterface.update", params, nil); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Config: cfgUpdated,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zabbix_host.h", "port", "10051"),
+					func(s *terraform.State) error {
+						host, err := testAccClient(t).GetHost(context.Background(), hostID)
+						if err != nil {
+							return err
+						}
+						if iface := host.AgentInterface(); iface == nil || iface.Port != "10051" {
+							return fmt.Errorf("external interface drift not repaired: %+v", host.Interfaces)
+						}
+						return nil
+					},
 				),
 			},
 			{
@@ -524,6 +557,7 @@ resource "zabbix_action" "act" {
   }
 `, adminUser)
 
+	var actionID string
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
@@ -537,7 +571,39 @@ resource "zabbix_action" "act" {
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.user_groups.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.users.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.subject", "{TRIGGER.NAME}"),
+				func(s *terraform.State) error {
+					var err error
+					actionID, err = stateID(s, "zabbix_action.act")
+					return err
+				},
 			)},
+			{
+				// External drift of the filter must be repaired by an apply of
+				// the unchanged configuration.
+				PreConfig: func() {
+					params := map[string]interface{}{
+						"actionid": actionID,
+						"filter":   map[string]interface{}{"evaltype": "0", "conditions": []interface{}{}},
+					}
+					if err := testAccClient(t).Call(context.Background(), "action.update", params, nil); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Config: cfg(name, opsBoth),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zabbix_action.act", "condition.#", "4"),
+					func(s *terraform.State) error {
+						action, err := testAccClient(t).GetAction(context.Background(), actionID)
+						if err != nil {
+							return err
+						}
+						if len(action.Filter.Conditions) != 4 {
+							return fmt.Errorf("external condition drift not repaired: %d conditions", len(action.Filter.Conditions))
+						}
+						return nil
+					},
+				),
+			},
 			{Config: cfg(name, opsCleared), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.default_msg", "false"),
