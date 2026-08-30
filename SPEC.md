@@ -69,7 +69,7 @@ zamkniecia), flaga `-debug`/`-version` (YAGNI; `version` trafia do `User-Agent`)
 | R1 | P1 | Read: `ErrNotFound` -> `SetId("")` + `tflog.Warn`; inny blad -> diag, ID zachowane; bledy `d.Set`/`Atoi` -> diag | `TestReadError` | DONE |
 | R2 | P2 | Delete idempotentny: blad "does not exist" uznany za sukces dopiero po `Get` potwierdzajacym `ErrNotFound` | `TestDeleteError` | DONE |
 | R3 | P1 | `Importer` passthrough x4, ID = natywny ID Zabbixa | `ImportStateVerify` w kazdym `TestAcc*` | DONE |
-| R4 | P2 | `timeouts` (2 min default per CRUD); SDKv2 naklada deadline na ctx przekazywany do HTTP | `TestProvider_InternalValidate` + C2 | DONE |
+| R4 | P2 | `timeouts` (2 min default per CRUD); SDKv2 naklada deadline na ctx przekazywany do HTTP; limit HTTP klienta 5 min tylko jako siatka bezpieczenstwa (linkowanie duzych template'ow na wolnym serwerze przekraczalo 30 s w CI) | `TestProvider_InternalValidate` + C2 | DONE |
 
 Ryzyko zaakceptowane (Codex): pusty wynik przy utracie uprawnien tokenu jest
 nieodroznialny od usuniecia obiektu - Zabbix zwraca pusta liste w obu przypadkach.

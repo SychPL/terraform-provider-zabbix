@@ -249,9 +249,13 @@ func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
 		}
 		tlsCfg.RootCAs = pool
 	}
+	// Per-request cap. Terraform's resource timeouts (default 2 minutes,
+	// configurable per resource) are enforced through the request context; this
+	// is only a safety net for calls made without a deadline. Linking large
+	// templates can legitimately take minutes on a busy Zabbix server.
 	timeout := cfg.Timeout
 	if timeout == 0 {
-		timeout = 30 * time.Second
+		timeout = 5 * time.Minute
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsCfg
