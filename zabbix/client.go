@@ -96,8 +96,10 @@ type jsonRpcRequest struct {
 type jsonRpcResponse struct {
 	Jsonrpc string          `json:"jsonrpc"`
 	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *JsonRpcError   `json:"error,omitempty"`
-	ID      int             `json:"id"`
+	// Error is kept raw so that the PRESENCE of the member can be checked:
+	// "error": null would otherwise decode to nil and hide a spec violation.
+	Error json.RawMessage `json:"error,omitempty"`
+	ID    int             `json:"id"`
 }
 
 type JsonRpcError struct {
@@ -473,13 +475,18 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 	if rpcResp.Jsonrpc != "2.0" || rpcResp.ID != 1 {
 		return fmt.Errorf("malformed JSON-RPC response from %s for %s: unexpected envelope", c.url, method)
 	}
-	if rpcResp.Error != nil {
+	if len(rpcResp.Error) != 0 {
 		if len(rpcResp.Result) != 0 {
-			// JSON-RPC 2.0 forbids carrying both; do not let such a response
-			// steer error handling (e.g. fake a session expiry after a success).
+			// JSON-RPC 2.0 forbids carrying both - even "error": null. Do not
+			// let such a response steer error handling (e.g. fake a session
+			// expiry after a success) or count as a successful mutation.
 			return fmt.Errorf("malformed JSON-RPC response from %s for %s: both result and error", c.url, method)
 		}
-		return rpcResp.Error
+		var rpcErr JsonRpcError
+		if string(rpcResp.Error) == "null" || json.Unmarshal(rpcResp.Error, &rpcErr) != nil {
+			return fmt.Errorf("malformed JSON-RPC response from %s for %s: unparsable error member", c.url, method)
+		}
+		return &rpcErr
 	}
 	// A success response must carry a result. Anything else (an HTML login
 	// page, an empty body, a proxy stub) must not be mistaken for a successful

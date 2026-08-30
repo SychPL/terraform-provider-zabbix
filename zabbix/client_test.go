@@ -455,6 +455,34 @@ func TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin(t *testing.T) {
 	}
 }
 
+func TestCall_NullErrorMemberIsMalformed(t *testing.T) {
+	// {"result": ..., "error": null} violates JSON-RPC 2.0; a forged delete
+	// response like this must not count as a successful mutation.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","result":{"hostids":["1"]},"error":null,"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewZabbixClient(ClientConfig{URL: srv.URL, APIToken: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteHost(context.Background(), "1"); err == nil || !strings.Contains(err.Error(), "both result and error") {
+		t.Fatalf("a null error member next to a result must be malformed, got %v", err)
+	}
+
+	null := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":null,"id":1}`))
+	}))
+	t.Cleanup(null.Close)
+	c2, err := NewZabbixClient(ClientConfig{URL: null.URL, APIToken: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.DeleteHost(context.Background(), "1"); err == nil || !strings.Contains(err.Error(), "unparsable error member") {
+		t.Fatalf("a lone null error member must be malformed, got %v", err)
+	}
+}
+
 func TestRawCall_RequestsAreNotReplayable(t *testing.T) {
 	// The exact request constructor used by rawCall must produce requests that
 	// net/http can never transparently replay.

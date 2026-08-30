@@ -191,6 +191,30 @@ resource "zabbix_host" "h" {
 				),
 			},
 			{
+				// Renaming the technical host name must update in place.
+				Config: base + fmt.Sprintf(`
+resource "zabbix_host" "h" {
+  host    = "%s-renamed"
+  enabled = false
+  groups  = [zabbix_host_group.g.id]
+  ip      = "192.0.2.12"
+}`, name),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zabbix_host.h", "host", name+"-renamed"),
+					resource.TestCheckResourceAttr("zabbix_host.h", "name", name+"-renamed"),
+					func(s *terraform.State) error {
+						id, err := stateID(s, "zabbix_host.h")
+						if err != nil {
+							return err
+						}
+						if id != hostID {
+							return fmt.Errorf("technical rename must not recreate the host (was %s, now %s)", hostID, id)
+						}
+						return nil
+					},
+				),
+			},
+			{
 				// User macro as the agent port must round-trip through the API.
 				Config: base + fmt.Sprintf(`
 resource "zabbix_host" "h" {
@@ -368,35 +392,42 @@ resource "zabbix_media_type" "wh" {
 
 func TestAccMediaType_email(t *testing.T) {
 	name := acctest.RandomWithPrefix("tfacc-email")
-	cfg := testAccProviderConfig() + fmt.Sprintf(`
+	cfg := func(port int, password string) string {
+		return testAccProviderConfig() + fmt.Sprintf(`
 resource "zabbix_media_type" "mail" {
   name                = %q
   type                = 0
   enabled             = false
   smtp_server         = "mail.example.test"
-  smtp_port           = 587
+  smtp_port           = %d
   smtp_helo           = "example.test"
   smtp_email          = "zabbix@example.test"
   smtp_security       = 1
   smtp_verify_peer    = true
   smtp_authentication = 1
   username            = "zabbix"
-  password            = "hunter2"
+  password            = %q
   content_type        = 0
   description         = "managed by terraform"
   max_attempts        = 5
-}`, name)
+}`, name, port, password)
+	}
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
 		CheckDestroy:      testAccCheckGone(t, "zabbix_media_type.mail", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
 		Steps: []resource.TestStep{
-			{Config: cfg, Check: resource.ComposeTestCheckFunc(
+			{Config: cfg(587, "hunter2"), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "enabled", "false"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_port", "587"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "password", "hunter2"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "content_type", "0"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "max_attempts", "5"),
+			)},
+			// Update without a type change must round-trip the changed values.
+			{Config: cfg(2525, "hunter3"), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_port", "2525"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "password", "hunter3"),
 			)},
 			{ResourceName: "zabbix_media_type.mail", ImportState: true, ImportStateVerify: true},
 		},

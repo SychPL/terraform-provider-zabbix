@@ -10,7 +10,8 @@ import (
 
 func resourceHostGroup() *schema.Resource {
 	return &schema.Resource{
-		Description:   "Manages a Zabbix host group.",
+		Description: "Manages a Zabbix host group. The name is managed authoritatively: " +
+			"after `terraform import`, set `name` to the current value and review the plan before the first apply - a different configured name renames the imported group.",
 		CreateContext: resourceHostGroupCreate,
 		ReadContext:   resourceHostGroupRead,
 		UpdateContext: resourceHostGroupUpdate,

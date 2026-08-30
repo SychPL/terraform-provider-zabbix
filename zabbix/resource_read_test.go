@@ -552,6 +552,44 @@ func TestMediaTypeResource_DeleteIdempotent(t *testing.T) {
 	}
 }
 
+func TestMediaTypeResource_EmailUpdatePayload(t *testing.T) {
+	var updated map[string]interface{}
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "mediatype.update":
+			_ = json.Unmarshal(req.Params, &updated)
+			return map[string][]string{"mediatypeids": {"45"}}, nil
+		case "mediatype.get":
+			return json.RawMessage(`[{"mediatypeid":"45","type":"0","name":"mail","status":"0",
+				"smtp_server":"mail.x","smtp_port":"2525","smtp_helo":"x","smtp_email":"a@x","smtp_security":"1",
+				"smtp_verify_peer":"0","smtp_verify_host":"0","smtp_authentication":"1","username":"u","passwd":"pw2",
+				"exec_path":"","gsm_modem":"","script":"","timeout":"30s","content_type":"0","parameters":[]}]`), nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceMediaType()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{
+		"name": "mail", "type": 0, "smtp_server": "mail.x", "smtp_helo": "x", "smtp_email": "a@x",
+		"smtp_port": 2525, "smtp_security": 1, "smtp_authentication": 1,
+		"username": "u", "password": "pw2", "content_type": 0,
+	})
+	d.SetId("45")
+	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatal(diags)
+	}
+	want := map[string]interface{}{"mediatypeid": "45", "smtp_port": "2525", "passwd": "pw2", "content_type": "0", "script": ""}
+	for k, v := range want {
+		if updated[k] != v {
+			t.Errorf("update payload %s: want %v, got %v", k, v, updated[k])
+		}
+	}
+	if d.Get("password") != "pw2" || d.Get("smtp_port") != 2525 {
+		t.Errorf("round-trip after update: %v %v", d.Get("password"), d.Get("smtp_port"))
+	}
+}
+
 func TestMediaTypeRead_RefusesScriptWithParameters(t *testing.T) {
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"1","name":"s","status":"0",
 		"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",

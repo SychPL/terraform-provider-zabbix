@@ -230,7 +230,7 @@ func versionDiagnostics(version string) diag.Diagnostics {
 		// warning instead of silently passing the gate (fail-closed).
 		if patch, err := strconv.Atoi(rest); err == nil {
 			if patch < 1 {
-				return diag.Errorf("Zabbix %s is not supported: user.checkAuthentication cannot validate API tokens before %s.1 (ZBXNEXT-8012); upgrade the server", version, SupportedVersionPrefix)
+				return diag.Errorf("Zabbix %s is not supported; the minimum supported release is %s.1 (6.4.0 cannot validate API tokens - ZBXNEXT-8012)", version, SupportedVersionPrefix)
 			}
 			return nil
 		}

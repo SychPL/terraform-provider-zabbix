@@ -3,12 +3,12 @@
 page_title: "zabbix_host_group Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix host group.
+  Manages a Zabbix host group. The name is managed authoritatively: after terraform import, set name to the current value and review the plan before the first apply - a different configured name renames the imported group.
 ---
 
 # zabbix_host_group (Resource)
 
-Manages a Zabbix host group.
+Manages a Zabbix host group. The name is managed authoritatively: after `terraform import`, set `name` to the current value and review the plan before the first apply - a different configured name renames the imported group.
 
 ## Example Usage
 
@@ -48,6 +48,6 @@ Optional:
 Import is supported using the following syntax:
 
 ```shell
-# Import using the Zabbix host group ID.
-terraform import zabbix_host_group.servers 22
+# Import using the Zabbix host group ID (look it up in the UI or with the API).
+terraform import zabbix_host_group.servers "$ZABBIX_HOST_GROUP_ID"
 ```

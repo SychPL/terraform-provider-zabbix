@@ -49,6 +49,10 @@
   foreign IDs are errors.
 - The version gate is fail-closed: an unparsable 6.4 patch level (e.g. a
   release candidate) gets the "untested" warning instead of silently passing.
+- JSON-RPC envelope: a present `error` member (even `null`) next to `result`
+  is treated as malformed instead of a success.
+- Import examples use environment-variable placeholders instead of hardcoded
+  object IDs that could match real production objects.
 
 ### Added
 
