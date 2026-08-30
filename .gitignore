@@ -34,3 +34,7 @@ Thumbs.db
 
 # Local development environments
 docker-compose.yml
+
+# Local SonarQube settings
+sonar-project.properties
+.scannerwork/
