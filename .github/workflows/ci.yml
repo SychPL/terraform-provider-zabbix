@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: No payload logging check
+        run: |
+          if grep -rnE 'os\.Stderr|os\.Stdout|fmt\.Fprint|fmt\.Print|\blog\.' --include='*.go' --exclude='*_test.go' zabbix/ main.go; then
+            echo "::error::Do not log directly to stdout/stderr in provider code."
+            exit 1
+          fi
+      - name: go mod tidy check
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+      - name: Unit tests
+        run: go test -race -count=1 ./...
+      - name: Vulnerabilities check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Format examples
+        run: terraform fmt -check -recursive example_deployment/
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: check
+
+  acceptance:
+    name: Acceptance tests (Zabbix 6.4)
+    runs-on: ubuntu-latest
+    needs: unit
+    env:
+      TF_ACC: "1"
+      ZABBIX_URL: http://localhost:8082/api_jsonrpc.php
+      ZABBIX_USERNAME: Admin
+      ZABBIX_PASSWORD: zabbix
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: Start Zabbix
+        run: docker compose -f docker-compose.acc.yml up -d --wait --wait-timeout 300
+      - name: Wait for Zabbix API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf -X POST -H 'Content-Type: application/json' \
+                 -d '{"jsonrpc":"2.0","method":"apiinfo.version","params":[],"id":1}' \
+                 "$ZABBIX_URL" | grep -q '"result"'; then exit 0; fi
+            sleep 5
+          done
+          docker compose -f docker-compose.acc.yml logs; exit 1
+      - name: Analyze database
+        run: docker compose -f docker-compose.acc.yml exec -T zabbix-db psql -U zabbix -q -c "ANALYZE"
+      - name: Run acceptance tests
+        run: go test -count=1 -timeout 30m -run 'TestAcc' -v ./zabbix
+      - name: Stop Zabbix
+        if: always()
+        run: docker compose -f docker-compose.acc.yml down -v

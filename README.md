@@ -1,102 +1,150 @@
-# Terraform Provider for Zabbix (6.4 API)
+# Terraform Provider for Zabbix
 
-A custom Terraform provider for managing [Zabbix](https://www.zabbix.com/) resources. This provider is specifically designed and optimized to interface with **Zabbix API version 6.4.x**.
+[![CI](https://github.com/Tensai123/terraform-provider-zabbix/actions/workflows/ci.yml/badge.svg)](https://github.com/Tensai123/terraform-provider-zabbix/actions/workflows/ci.yml)
 
----
+A Terraform provider for managing Zabbix objects through the JSON-RPC API.
+Tested against **Zabbix 6.4** (see [docker-compose.acc.yml](docker-compose.acc.yml)).
 
-## Features
+## Resources
 
-* **`zabbix_host_group`**: Manage Zabbix host groups.
-* **`zabbix_host`**: Manage Zabbix hosts, configure agent interfaces (IP/Port), and link templates.
-* **Automatic Version Check**: Provider automatically connects and verifies Zabbix API compatibility on startup.
+| Resource | Description |
+|---|---|
+| `zabbix_host_group` | Host groups |
+| `zabbix_host` | Hosts with a main agent interface (IP or DNS), groups, templates, visible name, status |
+| `zabbix_media_type` | Email (incl. SMTP auth/TLS), script, SMS and webhook media types |
+| `zabbix_action` | Trigger actions with conditions and "send message" operations |
 
----
+All resources support `terraform import` using the Zabbix object ID.
+Generated reference documentation lives in [docs/](docs/).
 
-## Requirements
-
-* [Terraform](https://www.terraform.io) 1.0+
-* [Go](https://golang.org) 1.22+ (to compile from source)
-* A Zabbix Server instance running version **6.4.x**
-
----
-
-## Building and Installing
-
-### 1. Build the Provider Binary
-To compile the provider locally, run the build command:
-```bash
-go build -o terraform-provider-zabbix
-```
-
-### 2. Configure Local Developer Override (Recommended for Dev)
-To test this local provider with Terraform without publishing it to the registry, set up a **developer override** in your local `~/.terraformrc` file:
-
-```hcl
-provider_installation {
-  dev_overrides {
-    "adi/zabbix" = "/home/adi/terraform-provider-zabbix"
-  }
-  
-  # For all other providers, install directly from registry
-  direct {}
-}
-```
-
-With this configuration, Terraform will automatically look for the compiled binary at `/home/adi/terraform-provider-zabbix` whenever you reference the provider `adi/zabbix`.
-
----
-
-## Example Usage
-
-Create a `main.tf` file:
+## Usage
 
 ```hcl
 terraform {
   required_providers {
     zabbix = {
-      source = "adi/zabbix"
+      source = "Tensai123/zabbix"
     }
   }
 }
 
-# Configure the Zabbix Provider
 provider "zabbix" {
-  url      = "http://your-zabbix-server/zabbix/api_jsonrpc.php"
-  username = "Admin"
-  password = "zabbix_password"
+  url       = "https://zabbix.example.com/api_jsonrpc.php"
+  api_token = var.zabbix_api_token # or username + password
 }
 
-# Create a Host Group
 resource "zabbix_host_group" "servers" {
-  name = "Linux Web Servers"
+  name = "Linux servers"
 }
 
-# Create a Host and assign it to the Group
-resource "zabbix_host" "web_node_01" {
-  host   = "web-server-production-01"
-  groups = [zabbix_host_group.servers.id]
-  ip     = "192.168.1.100"
-  port   = "10050"
-  
-  # Optionally link Zabbix Template IDs
-  # templates = ["10001", "10186"]
+resource "zabbix_host" "web01" {
+  host      = "web01"
+  groups    = [zabbix_host_group.servers.id]
+  templates = ["10001"] # Linux by Zabbix agent
+  ip        = "192.0.2.10"
 }
 ```
 
-Initialize and apply:
-```bash
-terraform init
-terraform apply
+### Provider configuration
+
+| Argument | Env variable | Description |
+|---|---|---|
+| `url` | `ZABBIX_URL` | API endpoint, e.g. `https://zabbix.example.com/api_jsonrpc.php` |
+| `api_token` | `ZABBIX_API_TOKEN` | API token (Administration -> API tokens). Recommended. |
+| `username` / `password` | `ZABBIX_USERNAME` / `ZABBIX_PASSWORD` | Alternative to `api_token`. The session is renewed automatically when it expires. |
+| `tls_insecure` | `ZABBIX_TLS_INSECURE` | Skip TLS verification (testing only) |
+| `ca_cert_file` | `ZABBIX_CA_CERT_FILE` | PEM bundle used to verify the server certificate |
+
+A warning is emitted when a non-loopback `http://` URL is used: credentials and
+tokens are then sent in clear text.
+
+### Sensitive values
+
+`password`, `api_token`, media type `password` and webhook `parameter.value`
+are marked sensitive: they are masked in CLI output but still stored in the
+Terraform state. Use an encrypted, access-controlled state backend.
+
+## Behaviour worth knowing
+
+- **Read errors never drop resources from state.** Only a confirmed "not found"
+  (empty API result) removes a resource; transport errors, timeouts and expired
+  sessions are surfaced as errors. Note that Zabbix returns an empty result also
+  when the user has no permission to see the object.
+- **`zabbix_host` only manages the main agent interface.** It is updated with
+  `hostinterface.update`; other interfaces (SNMP, IPMI, JMX) are never touched.
+  Templates removed from `templates` are unlinked with `templates_clear`, which
+  also removes their inherited items and triggers.
+- **`zabbix_media_type` only sends the attributes relevant for its `type`.**
+  Attributes of other types are validated at plan time and reset in state.
+- **`zabbix_action`** supports trigger actions (`eventsource = 0`, ForceNew) with
+  "send message" operations to user groups and/or users. `condition` is a set,
+  so ordering does not produce diffs.
+- Deletes are idempotent: an object already removed in Zabbix does not fail
+  `terraform destroy`.
+- **Objects the provider cannot represent are refused, not rewritten.** If an
+  imported or externally modified object uses features outside the supported
+  model (action operation types other than "send message", operation
+  conditions, custom condition expressions, non-trigger event sources, script
+  media type parameters, media type types other than email/script/SMS/webhook),
+  `Read` fails with an explanation. Because refresh runs before `plan` and
+  `destroy`, detach such an object with `terraform state rm <address>` (or
+  change it in Zabbix) instead of letting Terraform overwrite it.
+
+## Development
+
+Requirements: Go (see `go.mod`), Terraform >= 1.0, Docker.
+
+```sh
+go build ./...
+go test ./...                       # unit tests (no network)
 ```
 
----
+### Acceptance tests
 
-## Contributing
+```sh
+docker compose -f docker-compose.acc.yml up -d --wait   # Zabbix 6.4 on http://localhost:8082 (Admin / zabbix)
+TF_ACC=1 ZABBIX_URL=http://localhost:8082/api_jsonrpc.php \
+  ZABBIX_USERNAME=Admin ZABBIX_PASSWORD=zabbix \
+  go test ./zabbix -run TestAcc -count=1 -v
+docker compose -f docker-compose.acc.yml down -v
+```
 
-For guidelines on coding standards, codebase structure, and adding new Zabbix resources, please read the [zabbix-provider-contrib skill guide](file://.agents/skills/zabbix-provider-contrib/SKILL.md) in this repository.
+### Local provider override
 
----
+Build the binary and point Terraform at the checkout with a
+[development override](https://developer.hashicorp.com/terraform/cli/config/config-file#development-overrides):
+
+```hcl
+# ~/.terraformrc (Linux/macOS) or %APPDATA%\terraform.rc (Windows)
+provider_installation {
+  dev_overrides {
+    "Tensai123/zabbix" = "/path/to/terraform-provider-zabbix"
+  }
+  direct {}
+}
+```
+
+```sh
+go build -o terraform-provider-zabbix .        # terraform-provider-zabbix.exe on Windows
+cd example_deployment && terraform apply
+```
+
+### Documentation
+
+`docs/` is generated with [tfplugindocs](https://github.com/hashicorp/terraform-plugin-docs)
+from the schema descriptions and `examples/`:
+
+```sh
+go generate ./...
+```
+
+CI fails when `docs/` is out of date.
+
+## Release
+
+Tagging `v*` runs GoReleaser (see `.github/workflows/release.yml`), which builds,
+signs and publishes the binaries for the Terraform Registry.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](file://LICENSE) file for details.
+See [LICENSE](LICENSE).
