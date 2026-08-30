@@ -60,36 +60,22 @@ resource "zabbix_action" "notify_slack" {
 ### Required
 
 - `name` (String) Name of the action. Must be unique in Zabbix.
+- `operation` (Block List, Min: 1) Operations executed when the action fires (Zabbix requires at least one). Each operation must have at least one recipient in `user_groups` or `users`. Operations are kept in the configured order. (see [below for nested schema](#nestedblock--operation))
 
 ### Optional
 
 - `condition` (Block Set) Conditions filtering the events the action reacts to. Order is not significant. (see [below for nested schema](#nestedblock--condition))
 - `enabled` (Boolean) Whether the action is enabled.
-- `esc_period` (String) Default operation step duration (at least 60s), e.g. `1h`.
+- `esc_period` (String) Default operation step duration, 60s to 1w, e.g. `1h`.
 - `evaltype` (Number) Condition evaluation: 0 - And/Or, 1 - And, 2 - Or. Custom expressions (3) are not supported.
 - `eventsource` (Number) Event source. Only 0 (trigger actions) is supported. Changing it forces a new resource.
 - `notify_if_canceled` (Boolean) Notify about canceled escalations.
-- `operation` (Block List) Operations executed when the action fires. Each operation must have at least one recipient in `user_groups` or `users`. (see [below for nested schema](#nestedblock--operation))
 - `pause_suppressed` (Boolean) Pause escalations for suppressed problems.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
 - `id` (String) The ID of this resource.
-
-<a id="nestedblock--condition"></a>
-### Nested Schema for `condition`
-
-Required:
-
-- `conditiontype` (Number) Condition type, e.g. 0 - host group, 1 - host, 2 - trigger, 3 - trigger name, 4 - trigger severity, 13 - template, 25 - event tag, 26 - event tag value.
-- `value` (String) Value to compare with.
-
-Optional:
-
-- `operator` (Number) Condition operator, e.g. 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain.
-- `value2` (String) Second value; the tag name for condition type 26 (event tag value).
-
 
 <a id="nestedblock--operation"></a>
 ### Nested Schema for `operation`
@@ -106,6 +92,20 @@ Optional:
 - `subject` (String) Message subject (used when `default_msg` is false).
 - `user_groups` (Set of String) IDs of user groups to notify.
 - `users` (Set of String) IDs of users to notify.
+
+
+<a id="nestedblock--condition"></a>
+### Nested Schema for `condition`
+
+Required:
+
+- `conditiontype` (Number) Condition type, e.g. 0 - host group, 1 - host, 2 - trigger, 3 - trigger name, 4 - trigger severity, 13 - template, 25 - event tag, 26 - event tag value.
+- `value` (String) Value to compare with.
+
+Optional:
+
+- `operator` (Number) Condition operator, e.g. 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain.
+- `value2` (String) Second value; the tag name for condition type 26 (event tag value).
 
 
 <a id="nestedblock--timeouts"></a>

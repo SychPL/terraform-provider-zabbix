@@ -267,6 +267,67 @@ func TestMediaTypeParams_ScriptParametersUntouched(t *testing.T) {
 	if _, ok := p["parameters"]; ok {
 		t.Error("script media types must not send parameters (sortorder/value are not modelled)")
 	}
+	// On a type change the leftover webhook parameters must be cleared.
+	p = mediaTypeParams(&MediaType{Type: "1", ExecPath: "x.sh", ClearParameters: true})
+	if params, ok := p["parameters"].([]MediaTypeParam); !ok || len(params) != 0 {
+		t.Errorf("type change to script must send an empty parameter list, got %#v", p["parameters"])
+	}
+}
+
+func TestCall_FailedLoginIsMemoisedForLateCallers(t *testing.T) {
+	var logins atomic.Int32
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "user.login":
+			if logins.Add(1) == 1 {
+				return "tok1", nil
+			}
+			return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: "Incorrect user name or password or account is temporarily blocked."}
+		default:
+			return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+		}
+	})
+	c := newTestClient(t, s, passwordCfg)
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Sequential (late) callers holding the same expired token must not each
+	// trigger a new login attempt.
+	for i := 0; i < 4; i++ {
+		if _, err := c.GetHostGroup(context.Background(), "1"); err == nil || !strings.Contains(err.Error(), "user.login failed") {
+			t.Fatalf("call %d: want memoised login failure, got %v", i, err)
+		}
+	}
+	if got := logins.Load(); got != 2 {
+		t.Fatalf("want 1 initial + 1 failed login, got %d", got)
+	}
+}
+
+func TestCall_ReloginSurvivesInitiatorCancellation(t *testing.T) {
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "user.login":
+			time.Sleep(100 * time.Millisecond)
+			return "tok2", nil
+		case "hostgroup.get":
+			if req.Auth != "Bearer tok2" {
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+			}
+			return []HostGroup{{GroupID: "1", Name: "g"}}, nil
+		}
+		return "tok1", nil
+	})
+	c := newTestClient(t, s, passwordCfg)
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The initiator gives up quickly; a patient caller must still get the new token.
+	short, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, _ = c.GetHostGroup(short, "1")
+	if _, err := c.GetHostGroup(context.Background(), "1"); err != nil {
+		t.Fatalf("the login must complete for other callers even if its initiator was cancelled: %v", err)
+	}
 }
 
 func TestCall_LazyFirstLoginIsSingleFlight(t *testing.T) {

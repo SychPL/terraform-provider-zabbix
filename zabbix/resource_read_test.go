@@ -245,6 +245,36 @@ func TestMediaTypeRead_RefusesScriptWithParameters(t *testing.T) {
 	}
 }
 
+func TestHostUpdate_TemplatesClearFromAPIState(t *testing.T) {
+	// A template linked outside Terraform must be cleared (not only unlinked).
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.update":
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "hostinterface.update":
+			return map[string][]string{"interfaceids": {"5"}}, nil
+		case "host.get":
+			return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","description":"",
+				"parentTemplates":[{"templateid":"10001"},{"templateid":"10050"}],"hostgroups":[{"groupid":"2"}],
+				"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`), nil
+		}
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceHost()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "templates": []interface{}{"10001"}, "ip": "192.0.2.1"})
+	d.SetId("1")
+	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatal(diags)
+	}
+	var params map[string]interface{}
+	_ = json.Unmarshal(s.calls("host.update")[0].Params, &params)
+	clear, _ := params["templates_clear"].([]interface{})
+	if len(clear) != 1 || clear[0].(map[string]interface{})["templateid"] != "10050" {
+		t.Fatalf("want templates_clear [10050] computed from the API state, got %v", params["templates_clear"])
+	}
+}
+
 func TestHostUpdate_NoAgentInterface(t *testing.T) {
 	// Imported SNMP-only host: interface attributes cannot be updated, and no
 	// hostinterface.update must be attempted on the SNMP interface.

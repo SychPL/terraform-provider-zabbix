@@ -89,6 +89,16 @@ func resourceHost() *schema.Resource {
 }
 
 func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	// The visible name follows the technical name unless configured explicitly;
+	// normalising it here makes drift of a non-configured name visible in the plan.
+	if planKnown(d, "host", "name") {
+		raw := d.GetRawConfig()
+		if d.Get("name").(string) == "" || (!raw.IsNull() && raw.GetAttr("name").IsNull()) {
+			if err := d.SetNew("name", d.Get("host").(string)); err != nil {
+				return err
+			}
+		}
+	}
 	if !planKnown(d, "use_ip", "ip", "dns") {
 		return nil
 	}
@@ -108,11 +118,8 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 }
 
 func expandHost(d *schema.ResourceData) *HostSpec {
-	// The visible name follows the technical name unless it is configured
-	// explicitly; a Computed value carried over from state must not survive a
-	// rename of `host`.
-	name := d.Get("name").(string)
-	if raw := d.GetRawConfig(); name == "" || (!raw.IsNull() && raw.GetAttr("name").IsNull()) {
+	name := d.Get("name").(string) // normalised in CustomizeDiff
+	if name == "" {
 		name = d.Get("host").(string)
 	}
 	return &HostSpec{
@@ -184,19 +191,27 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	host, err := client.GetHost(ctx, d.Id())
+	if err != nil {
+		return diag.Errorf("reading host %s: %s", d.Id(), err)
+	}
+
 	if d.HasChanges("host", "name", "enabled", "description", "groups", "templates") {
-		oldT, newT := d.GetChange("templates")
-		clear := stringsDiff(setStrings(oldT), setStrings(newT))
-		if err := client.UpdateHost(ctx, d.Id(), expandHost(d), clear); err != nil {
+		// Templates to clear are computed from what Zabbix currently has linked
+		// (not only from state) so that a template linked outside Terraform is
+		// unlinked together with its inherited entities, as documented.
+		spec := expandHost(d)
+		current := make([]string, 0, len(host.ParentTemplates))
+		for _, t := range host.ParentTemplates {
+			current = append(current, t.TemplateID)
+		}
+		clear := stringsDiff(current, spec.TemplateIDs)
+		if err := client.UpdateHost(ctx, d.Id(), spec, clear); err != nil {
 			return diag.Errorf("updating host %s: %s", d.Id(), err)
 		}
 	}
 
 	if d.HasChanges("use_ip", "ip", "dns", "port") {
-		host, err := client.GetHost(ctx, d.Id())
-		if err != nil {
-			return diag.Errorf("reading host %s interfaces: %s", d.Id(), err)
-		}
 		iface := host.AgentInterface()
 		if iface == nil {
 			return diag.Errorf("host %s has no main agent interface to update; add one in Zabbix or remove the interface attributes from the configuration", d.Id())

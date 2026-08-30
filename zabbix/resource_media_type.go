@@ -381,6 +381,7 @@ func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m inte
 
 	mt := expandMediaType(d)
 	mt.MediaTypeID = d.Id()
+	mt.ClearParameters = d.HasChange("type")
 	if err := client.UpdateMediaType(ctx, mt); err != nil {
 		return diag.Errorf("updating media type %s: %s", d.Id(), err)
 	}

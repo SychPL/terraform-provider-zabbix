@@ -6,9 +6,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/go-cty/cty"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
+
+func TestIsLoopback(t *testing.T) {
+	for host, want := range map[string]bool{"localhost": true, "127.0.0.1": true, "127.1.2.3": true, "::1": true,
+		"127.attacker.example": false, "localhost.evil": false, "zabbix.example.com": false, "10.0.0.1": false} {
+		if got := isLoopback(host); got != want {
+			t.Errorf("%s: want %v, got %v", host, want, got)
+		}
+	}
+}
 
 func TestProvider_InternalValidate(t *testing.T) {
 	if err := Provider().InternalValidate(); err != nil {
@@ -186,11 +197,48 @@ func TestCustomizeDiff_UnknownValuesAreDeferred(t *testing.T) {
 	// Unknown values inside set elements arrive as the SDK marker string, not
 	// as typed values: this must not panic and must not produce false errors.
 	if err := planDiff(t, resourceAction(), map[string]interface{}{"name": "a",
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}},
 		"condition": []interface{}{
 			map[string]interface{}{"conditiontype": unknown, "value": "1"},
 			map[string]interface{}{"conditiontype": 26, "value": "prod", "value2": unknown},
 		}}); err != nil {
 		t.Errorf("action with unknown values inside condition elements must plan: %v", err)
+	}
+}
+
+func TestHostCustomizeDiff_NameFollowsHostUnlessConfigured(t *testing.T) {
+	r := resourceHost()
+	state := &terraform.InstanceState{ID: "1", Attributes: map[string]string{
+		"host": "web01", "name": "Renamed in the UI", "enabled": "true", "description": "",
+		"groups.#": "1", "groups.0": "2", "use_ip": "true", "ip": "192.0.2.1", "dns": "", "port": "10050",
+	}}
+	// CustomizeDiff inspects the raw configuration (name present or not); the
+	// test harness exposes it through the state.
+	rawWithoutName := cty.ObjectVal(map[string]cty.Value{
+		"host": cty.StringVal("web01"), "name": cty.NullVal(cty.String),
+		"groups": cty.SetVal([]cty.Value{cty.StringVal("2")}), "ip": cty.StringVal("192.0.2.1"),
+	})
+	state.RawConfig = rawWithoutName
+	cfg := terraform.NewResourceConfigRaw(map[string]interface{}{"host": "web01", "groups": []interface{}{"2"}, "ip": "192.0.2.1"})
+	diff, err := r.Diff(context.Background(), state, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff == nil || diff.Attributes["name"] == nil || diff.Attributes["name"].New != "web01" {
+		t.Fatalf("a visible name changed outside Terraform must show up as a diff back to host, got %v", diff)
+	}
+
+	state.RawConfig = cty.ObjectVal(map[string]cty.Value{
+		"host": cty.StringVal("web01"), "name": cty.StringVal("Renamed in the UI"),
+		"groups": cty.SetVal([]cty.Value{cty.StringVal("2")}), "ip": cty.StringVal("192.0.2.1"),
+	})
+	explicit := terraform.NewResourceConfigRaw(map[string]interface{}{"host": "web01", "name": "Renamed in the UI", "groups": []interface{}{"2"}, "ip": "192.0.2.1"})
+	diff, err = r.Diff(context.Background(), state, explicit, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff != nil && diff.Attributes["name"] != nil {
+		t.Fatalf("an explicitly configured name must not be normalised, got %v", diff.Attributes["name"])
 	}
 }
 
@@ -292,13 +340,16 @@ func TestActionCustomizeDiff(t *testing.T) {
 		{"no recipients", map[string]interface{}{"name": "a", "operation": op(nil)}, "at least one recipient"},
 		{"users ok", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, ""},
 		{"steps inverted", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"user_groups": []interface{}{"7"}, "esc_step_from": 3, "esc_step_to": 2})}, "esc_step_to"},
-		{"esc_period too short", map[string]interface{}{"name": "a", "esc_period": "30s"}, "at least 60 seconds"},
-		{"esc_period macro ok", map[string]interface{}{"name": "a", "esc_period": "{$ESC}"}, ""},
-		{"evaltype custom unsupported", map[string]interface{}{"name": "a", "evaltype": 3}, "expected evaltype"},
-		{"eventsource unsupported", map[string]interface{}{"name": "a", "eventsource": 1}, "expected eventsource"},
-		{"value2 without tag type", map[string]interface{}{"name": "a", "condition": []interface{}{map[string]interface{}{"conditiontype": 0, "value": "1", "value2": "x"}}}, "only supported for condition type 26"},
-		{"tag type without value2", map[string]interface{}{"name": "a", "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "value": "prod"}}}, "requires value2"},
-		{"tag type ok", map[string]interface{}{"name": "a", "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "operator": 2, "value": "prod", "value2": "env"}}}, ""},
+		{"esc_period too short", map[string]interface{}{"name": "a", "esc_period": "30s", "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, "between 60 seconds and 1 week"},
+		{"esc_period zero not allowed on action", map[string]interface{}{"name": "a", "esc_period": "0", "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, "between 60 seconds and 1 week"},
+		{"esc_period macro ok", map[string]interface{}{"name": "a", "esc_period": "{$ESC}", "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, ""},
+		{"operation esc_period zero ok", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}, "esc_period": "0"})}, ""},
+		{"no operations", map[string]interface{}{"name": "a"}, "Missing required argument"},
+		{"evaltype custom unsupported", map[string]interface{}{"name": "a", "evaltype": 3, "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, "expected evaltype"},
+		{"eventsource unsupported", map[string]interface{}{"name": "a", "eventsource": 1, "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, "expected eventsource"},
+		{"value2 without tag type", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 0, "value": "1", "value2": "x"}}}, "only supported for condition type 26"},
+		{"tag type without value2", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "value": "prod"}}}, "requires value2"},
+		{"tag type ok", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "operator": 2, "value": "prod", "value2": "env"}}}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -320,8 +371,9 @@ func TestReadError(t *testing.T) {
 	if diags := readError(context.Background(), d, "host group", errors.New("timeout")); !diags.HasError() || d.Id() != "42" {
 		t.Errorf("transport error must be surfaced and keep the ID, got diags=%v id=%q", diags, d.Id())
 	}
-	if diags := readError(context.Background(), d, "host group", ErrNotFound); diags.HasError() || d.Id() != "" {
-		t.Errorf("not found must clear the ID without error, got diags=%v id=%q", diags, d.Id())
+	diags := readError(context.Background(), d, "host group", ErrNotFound)
+	if diags.HasError() || d.Id() != "" || len(diags) != 1 || diags[0].Severity != diag.Warning {
+		t.Errorf("not found must clear the ID with a warning, got diags=%v id=%q", diags, d.Id())
 	}
 }
 

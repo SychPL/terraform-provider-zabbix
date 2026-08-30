@@ -3,6 +3,7 @@ package zabbix
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -135,7 +136,11 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 }
 
 func isLoopback(host string) bool {
-	return host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1"
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // plainHTTPWarning warns when credentials would be sent in clear text.

@@ -47,7 +47,7 @@ func resourceAction() *schema.Resource {
 				Optional:     true,
 				Default:      "1h",
 				ValidateFunc: validateEscPeriod,
-				Description:  "Default operation step duration (at least 60s), e.g. `1h`.",
+				Description:  "Default operation step duration, 60s to 1w, e.g. `1h`.",
 			},
 			"evaltype": {
 				Type:         schema.TypeInt,
@@ -101,8 +101,9 @@ func resourceAction() *schema.Resource {
 			},
 			"operation": {
 				Type:        schema.TypeList,
-				Optional:    true,
-				Description: "Operations executed when the action fires. Each operation must have at least one recipient in `user_groups` or `users`.",
+				Required:    true,
+				MinItems:    1,
+				Description: "Operations executed when the action fires (Zabbix requires at least one). Each operation must have at least one recipient in `user_groups` or `users`. Operations are kept in the configured order.",
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"operationtype": {
@@ -116,7 +117,7 @@ func resourceAction() *schema.Resource {
 							Type:         schema.TypeString,
 							Optional:     true,
 							Default:      "0",
-							ValidateFunc: validateEscPeriod,
+							ValidateFunc: validateOperationEscPeriod,
 							Description:  "Step duration; 0 uses the action's `esc_period`.",
 						},
 						"esc_step_from": {

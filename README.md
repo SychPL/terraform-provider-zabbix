@@ -81,6 +81,14 @@ Terraform state. Use an encrypted, access-controlled state backend.
   so ordering does not produce diffs.
 - Deletes are idempotent: an object already removed in Zabbix does not fail
   `terraform destroy`.
+- **Objects the provider cannot represent are refused, not rewritten.** If an
+  imported or externally modified object uses features outside the supported
+  model (action operation types other than "send message", operation
+  conditions, custom condition expressions, non-trigger event sources, script
+  media type parameters, media type types other than email/script/SMS/webhook),
+  `Read` fails with an explanation. Because refresh runs before `plan` and
+  `destroy`, detach such an object with `terraform state rm <address>` (or
+  change it in Zabbix) instead of letting Terraform overwrite it.
 
 ## Development
 

@@ -40,6 +40,18 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - name: Example configurations are formatted
         run: terraform fmt -check -recursive examples/ example_deployment/
+      - name: Example configurations validate against the built provider
+        run: |
+          go build -o /tmp/tfdev/terraform-provider-zabbix .
+          cat > /tmp/dev.tfrc <<EOF
+          provider_installation {
+            dev_overrides { "Tensai123/zabbix" = "/tmp/tfdev" }
+            direct {}
+          }
+          EOF
+          for dir in examples/provider examples/resources/*/ example_deployment; do
+            echo "== $dir"; (cd "$dir" && TF_CLI_CONFIG_FILE=/tmp/dev.tfrc terraform validate -no-color)
+          done
       - name: Docs are up to date
         run: |
           go generate ./...

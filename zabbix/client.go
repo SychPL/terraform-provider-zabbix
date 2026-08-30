@@ -56,18 +56,38 @@ type ZabbixClient struct {
 	apiToken   string
 	httpClient *http.Client
 
-	mu    sync.Mutex // guards token and flight
+	mu    sync.Mutex // guards token, flight and failed
 	token string
 	// flight is the in-progress login, if any. Callers that observe the same
 	// stale token wait for it (or for their own context) and share its result,
 	// including a failure, instead of each logging in again.
 	flight *loginFlight
+	// failed remembers the last failed login for a token generation so that
+	// late callers holding the same stale token do not trigger another
+	// attempt (and an account lockout) within loginFailureMemo.
+	failed *loginFailure
 }
 
 type loginFlight struct {
 	done chan struct{}
 	err  error
 }
+
+type loginFailure struct {
+	staleToken string
+	err        error
+	at         time.Time
+}
+
+const (
+	// loginTimeout bounds a login performed on behalf of several callers; it is
+	// detached from the initiating caller's context so that one short deadline
+	// cannot cancel the login for everybody.
+	loginTimeout = 60 * time.Second
+	// loginFailureMemo is how long a failed login is returned to callers with
+	// the same stale token instead of retrying.
+	loginFailureMemo = 30 * time.Second
+)
 
 type jsonRpcRequest struct {
 	Jsonrpc string      `json:"jsonrpc"`
@@ -184,6 +204,9 @@ type MediaType struct {
 	Script             string           `json:"script"`
 	Timeout            string           `json:"timeout"`
 	Parameters         []MediaTypeParam `json:"parameters"`
+	// ClearParameters forces an empty parameter list even for script media
+	// types; set on a type change so webhook parameters do not linger.
+	ClearParameters bool `json:"-"`
 }
 
 type MediaTypeParam struct {
@@ -258,7 +281,11 @@ func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading ca_cert_file: %w", err)
 		}
-		pool := x509.NewCertPool()
+		// Extra CAs are added to the system pool, not used instead of it.
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
 		if !pool.AppendCertsFromPEM(pem) {
 			return nil, fmt.Errorf("ca_cert_file %q contains no valid PEM certificates", cfg.CACertFile)
 		}
@@ -334,6 +361,10 @@ func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
 		c.mu.Unlock()
 		return nil
 	}
+	if lf := c.failed; lf != nil && lf.staleToken == staleToken && time.Since(lf.at) < loginFailureMemo {
+		c.mu.Unlock()
+		return lf.err
+	}
 	if f := c.flight; f != nil {
 		c.mu.Unlock()
 		select {
@@ -347,9 +378,11 @@ func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
 	c.flight = f
 	c.mu.Unlock()
 
+	loginCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginTimeout)
+	defer cancel()
 	var token string
 	params := map[string]string{"username": c.username, "password": c.password}
-	err := c.rawCall(ctx, "user.login", params, "", &token)
+	err := c.rawCall(loginCtx, "user.login", params, "", &token)
 	if err != nil {
 		err = fmt.Errorf("user.login failed: %w", err)
 	}
@@ -359,6 +392,9 @@ func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
 	c.mu.Lock()
 	if err == nil {
 		c.token = token
+		c.failed = nil
+	} else {
+		c.failed = &loginFailure{staleToken: staleToken, err: err, at: time.Now()}
 	}
 	f.err = err
 	close(f.done)
@@ -615,7 +651,9 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 		}
 	case "1": // Script
 		params["exec_path"] = mt.ExecPath
-		delete(params, "parameters") // sortorder/value parameters are left untouched
+		if !mt.ClearParameters {
+			delete(params, "parameters") // sortorder/value parameters are left untouched
+		}
 	case "2": // SMS
 		params["gsm_modem"] = mt.GSMModem
 	case "4": // Webhook

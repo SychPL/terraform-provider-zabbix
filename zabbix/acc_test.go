@@ -370,7 +370,13 @@ resource "zabbix_action" "act" {
     user_groups = [%q]
     users       = [%q]
   }
-`, adminGroup, adminUser)
+  operation {
+    esc_step_from = 2
+    esc_step_to   = 3
+    esc_period    = "30m"
+    users         = [%q]
+  }
+`, adminGroup, adminUser, adminUser)
 	opsUsersOnly := fmt.Sprintf(`
   operation {
     esc_step_to = 0
@@ -385,6 +391,9 @@ resource "zabbix_action" "act" {
 		Steps: []resource.TestStep{
 			{Config: cfg(name, opsBoth), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_action.act", "condition.#", "4"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "operation.#", "2"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "operation.1.esc_step_from", "2"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "operation.1.esc_period", "30m"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.user_groups.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.users.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.subject", "{TRIGGER.NAME}"),
@@ -483,6 +492,12 @@ resource "zabbix_media_type" "mt" {
   type   = 4
   script = "return 'OK';"
 `
+	webhookWithParam := webhook + `
+  parameter {
+    name  = "url"
+    value = "https://example.test"
+  }
+`
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
@@ -505,6 +520,14 @@ resource "zabbix_media_type" "mt" {
 				resource.TestCheckResourceAttr("zabbix_media_type.mt", "gsm_modem", ""),
 				resource.TestCheckResourceAttr("zabbix_media_type.mt", "parameter.#", "0"),
 			)},
+			{Config: cfg(webhookWithParam), Check: resource.TestCheckResourceAttr("zabbix_media_type.mt", "parameter.#", "1")},
+			// Webhook parameters must be cleared on the way back to a script type,
+			// otherwise the script would be refused as unmanageable.
+			{Config: cfg(script), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "type", "1"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "parameter.#", "0"),
+			)},
+			{ResourceName: "zabbix_media_type.mt", ImportState: true, ImportStateVerify: true},
 		},
 	})
 }

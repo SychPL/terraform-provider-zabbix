@@ -115,9 +115,10 @@ func setFields(d *schema.ResourceData, values map[string]interface{}) error {
 // other error is surfaced and the state is left untouched.
 func readError(ctx context.Context, d *schema.ResourceData, kind string, err error) diag.Diagnostics {
 	if errors.Is(err, ErrNotFound) {
-		tflog.Warn(ctx, fmt.Sprintf("%s %s not found in Zabbix (or not visible to the current user); removing from state", kind, d.Id()))
+		msg := fmt.Sprintf("%s %s not found in Zabbix (or not visible to the current user); removing it from state, it will be recreated on the next apply", kind, d.Id())
+		tflog.Warn(ctx, msg)
 		d.SetId("")
-		return nil
+		return diag.Diagnostics{{Severity: diag.Warning, Summary: "Resource removed from state", Detail: msg}}
 	}
 	return diag.Errorf("reading %s %s: %s", kind, d.Id(), err)
 }
@@ -156,16 +157,25 @@ func parseZabbixDuration(s string) (int, error) {
 	return n * mult[m[2]], nil
 }
 
-// validateEscPeriod accepts 0 (use action default) or a duration of at least 60 seconds.
+// validateEscPeriod accepts a duration between 60 seconds and 1 week (or a
+// user macro); used for the action's default step duration.
 func validateEscPeriod(v interface{}, k string) ([]string, []error) {
 	secs, err := parseZabbixDuration(v.(string))
 	if err != nil {
 		return nil, []error{fmt.Errorf("%s: %w", k, err)}
 	}
-	if secs != -1 && secs != 0 && secs < 60 {
-		return nil, []error{fmt.Errorf("%s: must be 0 or at least 60 seconds, got %q", k, v)}
+	if secs != -1 && (secs < 60 || secs > 604800) {
+		return nil, []error{fmt.Errorf("%s: must be between 60 seconds and 1 week, got %q", k, v)}
 	}
 	return nil, nil
+}
+
+// validateOperationEscPeriod additionally accepts 0 (inherit the action's period).
+func validateOperationEscPeriod(v interface{}, k string) ([]string, []error) {
+	if v.(string) == "0" {
+		return nil, nil
+	}
+	return validateEscPeriod(v, k)
 }
 
 // validatePort accepts a port number 1-65535 or a user macro.
