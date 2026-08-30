@@ -118,9 +118,13 @@ func TestAccHost_lifecycle(t *testing.T) {
 	base := testAccProviderConfig() + fmt.Sprintf(`
 resource "zabbix_host_group" "g" { name = "%s-grp" }
 `, name)
+	// Test hosts are created disabled: an enabled host with an unroutable IP is
+	// polled by the server, whose item_rtdata writes hold row locks that block
+	// host.update/host.delete for minutes on a slow CI runner.
 	cfgIP := base + fmt.Sprintf(`
 resource "zabbix_host" "h" {
   host      = %q
+  enabled   = false
   groups    = [zabbix_host_group.g.id]
   templates = [%q, %q]
   ip        = "192.0.2.10"
@@ -138,10 +142,11 @@ resource "zabbix_host" "h" {
 }`, name, name, templateA)
 	cfgDNS := base + fmt.Sprintf(`
 resource "zabbix_host" "h" {
-  host   = %q
-  groups = [zabbix_host_group.g.id]
-  use_ip = false
-  dns    = "agent.example.test"
+  host    = %q
+  enabled = false
+  groups  = [zabbix_host_group.g.id]
+  use_ip  = false
+  dns     = "agent.example.test"
 }`, name)
 
 	var hostID string
@@ -154,6 +159,7 @@ resource "zabbix_host" "h" {
 				Config: cfgIP,
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("zabbix_host.h", "name", name),
+					resource.TestCheckResourceAttr("zabbix_host.h", "enabled", "false"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "templates.#", "2"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "port", "10050"),
 					func(s *terraform.State) error { var err error; hostID, err = stateID(s, "zabbix_host.h"); return err },
