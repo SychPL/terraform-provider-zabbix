@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+  workflow_dispatch:
+  schedule:
+    # Weekly: govulncheck against fresh advisories even without commits.
+    - cron: '15 5 * * 1'
 
 permissions:
   contents: read
@@ -74,8 +78,10 @@ jobs:
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           version: v2.18.0
-          # All targets: a broken cross-build must not wait for a tagged release.
-          args: build --snapshot --clean
+          # Full snapshot pipeline (archives, checksums, registry manifest) so a
+          # packaging error cannot wait for a tagged release; publish and sign
+          # are skipped.
+          args: release --snapshot --clean --skip=publish,sign
 
   acceptance:
     name: Acceptance tests (Zabbix 6.4)

@@ -14,7 +14,7 @@ func resourceHost() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix host with a single main agent interface. " +
 			"Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. " +
-			"`groups` and `templates` are managed authoritatively: after `terraform import`, reproduce the full lists in the configuration before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.",
+			"Every attribute of this resource is managed authoritatively: after `terraform import`, reproduce the full configuration (including `enabled`, `description` and the interface address) and review the plan before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.",
 		CreateContext: resourceHostCreate,
 		ReadContext:   resourceHostRead,
 		UpdateContext: resourceHostUpdate,
@@ -107,9 +107,13 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 	ip, dns := d.Get("ip").(string), d.Get("dns").(string)
 	if ip == "" && dns == "" {
 		// No agent interface at all - valid for hosts monitored through
-		// trapper/dependent items - but then DNS mode makes no sense.
+		// trapper/dependent items - but then DNS mode makes no sense and a
+		// custom port would never be applied (perpetual diff).
 		if !d.Get("use_ip").(bool) {
 			return fmt.Errorf("dns is required when use_ip is false")
+		}
+		if planKnown(d, "port") && d.Get("port").(string) != "10050" {
+			return fmt.Errorf("port requires ip or dns (the host has no agent interface)")
 		}
 		return nil
 	}

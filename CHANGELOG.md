@@ -40,7 +40,8 @@
 
 ### Added
 
-- `api_token` authentication (Bearer header, validated at provider configure),
+- `api_token` authentication (Bearer header, validated at configure time with
+  `user.checkAuthentication`, independent of the token's method permissions),
   `tls_insecure` (warns when active), `ca_cert_file` (added to the system
   trust store; mutually exclusive with `tls_insecure`, also when set through
   the environment). Every mutation verifies a typed response with the

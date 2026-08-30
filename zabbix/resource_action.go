@@ -14,7 +14,7 @@ func resourceAction() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix trigger action with \"send message\" operations. " +
 			"Recovery and update operations are not supported yet. " +
-			"The whole filter and all operations are managed authoritatively: after `terraform import`, reproduce every condition and operation in the configuration before the first apply, otherwise the missing ones are removed.",
+			"Every attribute is managed authoritatively: after `terraform import`, reproduce the full configuration (all conditions and operations, and non-default `enabled`, `esc_period`, `evaltype`, `pause_suppressed`, `notify_if_canceled`) and review the plan before the first apply - missing pieces are removed or reset.",
 		CreateContext: resourceActionCreate,
 		ReadContext:   resourceActionRead,
 		UpdateContext: resourceActionUpdate,

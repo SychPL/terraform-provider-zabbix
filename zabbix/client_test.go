@@ -681,6 +681,40 @@ func TestCall_FailedLoginMemoExpires(t *testing.T) {
 	}
 }
 
+func TestCall_MutationRetriedExactlyOnceAfterRelogin(t *testing.T) {
+	// A mutation rejected with an expired session is safe to retry (Zabbix
+	// rejects it before executing); it must be sent exactly twice in total.
+	var logins, deletes atomic.Int32
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "user.login":
+			if logins.Add(1) == 1 {
+				return "tok1", nil
+			}
+			return "tok2", nil
+		case "hostgroup.delete":
+			if deletes.Add(1) == 1 {
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+			}
+			if req.Auth != "Bearer tok2" {
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+			}
+			return map[string][]string{"groupids": {"1"}}, nil
+		}
+		return nil, nil
+	})
+	c := newTestClient(t, s, passwordCfg)
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteHostGroup(context.Background(), "1"); err != nil {
+		t.Fatalf("delete after re-login must succeed: %v", err)
+	}
+	if deletes.Load() != 2 || logins.Load() != 2 {
+		t.Fatalf("want exactly 2 delete attempts and 2 logins, got %d/%d", deletes.Load(), logins.Load())
+	}
+}
+
 func TestIsObjectMissing(t *testing.T) {
 	err := &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
 	if !IsObjectMissing(err) {

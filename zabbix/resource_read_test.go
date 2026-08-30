@@ -357,6 +357,16 @@ func TestHostGroupResource_CRUD(t *testing.T) {
 	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
 		t.Fatal(diags)
 	}
+	if calls := s.calls("hostgroup.update"); len(calls) != 1 {
+		t.Fatalf("want exactly one hostgroup.update, got %d", len(calls))
+	} else {
+		var params map[string]string
+		_ = json.Unmarshal(calls[0].Params, &params)
+		// After create the state reflects the API ("g2"), so the update carries it.
+		if params["name"] != "g2" || params["groupid"] != "42" {
+			t.Fatalf("update payload must carry the configured name, got %v", params)
+		}
+	}
 	if diags := r.DeleteContext(context.Background(), d, c); diags.HasError() {
 		t.Fatal(diags)
 	}
@@ -454,6 +464,34 @@ func TestHostUpdate_TemplatesClearFromAPIState(t *testing.T) {
 	clear, _ := params["templates_clear"].([]interface{})
 	if len(clear) != 1 || clear[0].(map[string]interface{})["templateid"] != "10050" {
 		t.Fatalf("want templates_clear [10050] computed from the API state, got %v", params["templates_clear"])
+	}
+}
+
+func TestHostUpdate_PartialFailureKeepsID(t *testing.T) {
+	// host.update succeeds, the interface update fails: the error must surface
+	// and the ID stay, so the next apply retries the interface step.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.update":
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "hostinterface.update":
+			return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: "boom"}
+		case "host.get":
+			return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+				"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`), nil
+		}
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": "192.0.2.9"})
+	d.SetId("1")
+	diags := resourceHost().UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "agent interface") || d.Id() != "1" {
+		t.Fatalf("partial failure must surface and keep the ID, got %v id=%q", diags, d.Id())
+	}
+	if len(s.calls("hostinterface.update")) != 1 {
+		t.Fatal("the interface update must have been attempted once")
 	}
 }
 

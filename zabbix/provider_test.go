@@ -2,6 +2,7 @@ package zabbix
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -45,11 +46,16 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 			return "6.4.21", nil
 		case "user.login":
 			return "tok", nil
-		case "user.get":
-			if req.Auth != "Bearer t" {
-				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+		case "user.checkAuthentication":
+			if req.Auth != "" {
+				t.Error("user.checkAuthentication must be called without an Authorization header")
 			}
-			return []map[string]string{{"userid": "1"}}, nil
+			var p map[string]string
+			_ = json.Unmarshal(req.Params, &p)
+			if p["token"] != "t" {
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: "Not authorized."}
+			}
+			return map[string]string{"userid": "1"}, nil
 		}
 		return nil, nil
 	})
@@ -99,14 +105,61 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 	}
 }
 
+// The schema itself must accept env-driven defaults without conflicts:
+// validation runs after DefaultFuncs are applied, so any ConflictsWith or
+// RequiredWith would fire on values the user never wrote in HCL.
+func TestProviderValidate_EnvDefaultsDoNotConflict(t *testing.T) {
+	t.Setenv("ZABBIX_USERNAME", "Admin")
+	t.Setenv("ZABBIX_PASSWORD", "zabbix")
+	if diags := resourceValidate(t, map[string]interface{}{"url": "https://x", "api_token": "t"}); diags.HasError() {
+		t.Fatalf("api_token in HCL with credentials in the environment must pass schema validation: %v", diags)
+	}
+	t.Setenv("ZABBIX_API_TOKEN", "envtok")
+	if diags := resourceValidate(t, map[string]interface{}{"url": "https://x", "username": "u", "password": "p"}); diags.HasError() {
+		t.Fatalf("credentials in HCL with a token in the environment must pass schema validation: %v", diags)
+	}
+}
+
+func TestProviderConfigure_CredentialsWinOverEnvToken(t *testing.T) {
+	clearProviderEnv(t)
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "apiinfo.version":
+			return "6.4.21", nil
+		case "user.login":
+			return "sess", nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	t.Setenv("ZABBIX_API_TOKEN", "envtok")
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": s.URL, "username": "u", "password": "p"})
+	client, diags := providerConfigure(context.Background(), d)
+	if diags.HasError() {
+		t.Fatalf("explicit credentials with an env token must configure with a warning, got %v", diags)
+	}
+	var warned bool
+	for _, dg := range diags {
+		if strings.Contains(dg.Summary, "Ignoring ZABBIX_API_TOKEN") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("want a warning about the ignored env token, got %v", diags)
+	}
+	if c := client.(*ZabbixClient); c.apiToken != "" {
+		t.Fatal("the env token must be dropped when credentials are explicit")
+	}
+}
+
 func TestProviderConfigure_TokenWinsOverEnvCredentials(t *testing.T) {
 	clearProviderEnv(t)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "apiinfo.version":
 			return "6.4.21", nil
-		case "user.get":
-			return []map[string]string{{"userid": "1"}}, nil
+		case "user.checkAuthentication":
+			return map[string]string{"userid": "1"}, nil
 		}
 		t.Errorf("unexpected method %s (user.login must not be called)", req.Method)
 		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
@@ -135,8 +188,8 @@ func TestProviderConfigure_TokenWinsOverEnvCredentials(t *testing.T) {
 func TestProviderConfigure_WarnsOnUntestedVersion(t *testing.T) {
 	clearProviderEnv(t)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
-		if req.Method == "user.get" {
-			return []map[string]string{{"userid": "1"}}, nil
+		if req.Method == "user.checkAuthentication" {
+			return map[string]string{"userid": "1"}, nil
 		}
 		return "7.0.3", nil
 	})
@@ -353,6 +406,9 @@ func TestHostCustomizeDiff(t *testing.T) {
 	}
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "dns": "x.local"}); err == nil || !strings.Contains(err.Error(), "ip is required") {
 		t.Errorf("dns with use_ip=true must ask for ip or use_ip=false, got %v", err)
+	}
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "port": "10051"}); err == nil || !strings.Contains(err.Error(), "port requires ip or dns") {
+		t.Errorf("a custom port without an address must fail (it would never converge), got %v", err)
 	}
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "use_ip": false}); err == nil || !strings.Contains(err.Error(), "dns is required") {
 		t.Errorf("dns mode without dns must fail, got %v", err)

@@ -3,12 +3,12 @@
 page_title: "zabbix_action Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. The whole filter and all operations are managed authoritatively: after terraform import, reproduce every condition and operation in the configuration before the first apply, otherwise the missing ones are removed.
+  Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. Every attribute is managed authoritatively: after terraform import, reproduce the full configuration (all conditions and operations, and non-default enabled, esc_period, evaltype, pause_suppressed, notify_if_canceled) and review the plan before the first apply - missing pieces are removed or reset.
 ---
 
 # zabbix_action (Resource)
 
-Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. The whole filter and all operations are managed authoritatively: after `terraform import`, reproduce every condition and operation in the configuration before the first apply, otherwise the missing ones are removed.
+Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. Every attribute is managed authoritatively: after `terraform import`, reproduce the full configuration (all conditions and operations, and non-default `enabled`, `esc_period`, `evaltype`, `pause_suppressed`, `notify_if_canceled`) and review the plan before the first apply - missing pieces are removed or reset.
 
 ## Example Usage
 

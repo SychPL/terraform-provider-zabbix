@@ -23,6 +23,9 @@ resource "zabbix_media_type" "slack" {
     var req = new HttpRequest();
     req.addHeader('Content-Type: application/json');
     req.post(params.url, JSON.stringify({ text: params.message }));
+    if (req.getStatus() !== 200) {
+      throw 'Slack responded with HTTP ' + req.getStatus();
+    }
     return 'OK';
   EOT
 

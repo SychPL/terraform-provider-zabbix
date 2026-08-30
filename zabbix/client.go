@@ -479,11 +479,13 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 	return nil
 }
 
-// CheckAuth verifies that the configured credentials are accepted by making
-// a cheap authenticated call.
+// CheckAuth verifies that the configured API token is valid.
+// user.checkAuthentication is used because it does not depend on the token's
+// role having access to any particular API method; the Zabbix API requires it
+// to be called without an Authorization header.
 func (c *ZabbixClient) CheckAuth(ctx context.Context) error {
-	var res []map[string]string
-	return c.Call(ctx, "user.get", map[string]interface{}{"output": []string{"userid"}, "limit": 1}, &res)
+	var user map[string]interface{}
+	return c.rawCall(ctx, "user.checkAuthentication", map[string]string{"token": c.apiToken}, "", &user)
 }
 
 // GetVersion calls apiinfo.version (unauthenticated).
