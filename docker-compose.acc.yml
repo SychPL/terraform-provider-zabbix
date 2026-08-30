@@ -1,0 +1,55 @@
+services:
+  zabbix-db:
+    image: postgres:15-alpine@sha256:fe0737ba566a2c5b2a28f34433c0a423261900ec17b9bf7ad115e1aae7e57f1b
+    container_name: zabbix-db
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_password
+    volumes:
+      - zabbix-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-6.4.21@sha256:758c058909fdcc4e73034380460ea44bd5be965a80dcfc28744408b792ef04e5
+    container_name: zabbix-server
+    ports:
+      - "127.0.0.1:10051:10051"
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_password
+    depends_on:
+      zabbix-db:
+        condition: service_healthy
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-6.4.21@sha256:87f21dd6ba638f6297dc1f6d0d3169d416a6fccc09981d5282ff5f886a26671c
+    container_name: zabbix-web
+    ports:
+      - "127.0.0.1:8082:8080"
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_password
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_PORT: 10051
+    depends_on:
+      zabbix-db:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"apiinfo.version\",\"params\":[],\"id\":1}' http://localhost:8080/api_jsonrpc.php | grep -q result"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  zabbix-db-data:
