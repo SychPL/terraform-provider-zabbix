@@ -79,6 +79,15 @@ jobs:
             sleep 5
           done
           docker compose -f docker-compose.acc.yml logs --tail 50; exit 1
+      - name: Wait for Zabbix server startup
+        # The server runs DB maintenance on first start; API writes (e.g. host
+        # creation with templates) block on those locks until it is done.
+        run: |
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.acc.yml logs zabbix-server 2>/dev/null | grep -q 'server #0 started'; then exit 0; fi
+            sleep 5
+          done
+          docker compose -f docker-compose.acc.yml logs --tail 50 zabbix-server; exit 1
       - name: Acceptance tests
         run: go test -count=1 -timeout 30m -run 'TestAcc' -v ./zabbix
       - name: Stop Zabbix
