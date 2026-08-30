@@ -142,12 +142,12 @@ type ActionCondition struct {
 }
 
 type ActionOperation struct {
-	OperationType string                 `json:"operationtype"` // "0" = send message
-	EscPeriod     string                 `json:"esc_period,omitempty"`
-	EscStepFrom   string                 `json:"esc_step_from,omitempty"`
-	EscStepTo     string                 `json:"esc_step_to,omitempty"`
-	OpMessage     *ActionOpMessage       `json:"opmessage,omitempty"`
-	OpMessageGrp  []ActionOpMessageGrp   `json:"opmessage_grp,omitempty"`
+	OperationType string               `json:"operationtype"` // "0" = send message
+	EscPeriod     string               `json:"esc_period,omitempty"`
+	EscStepFrom   string               `json:"esc_step_from,omitempty"`
+	EscStepTo     string               `json:"esc_step_to,omitempty"`
+	OpMessage     *ActionOpMessage     `json:"opmessage,omitempty"`
+	OpMessageGrp  []ActionOpMessageGrp `json:"opmessage_grp,omitempty"`
 }
 
 type ActionOpMessage struct {
@@ -509,7 +509,7 @@ func (c *ZabbixClient) UpdateHost(ctx context.Context, id string, name string, g
 func (c *ZabbixClient) GetHostInterface(ctx context.Context, hostID string) (*HostInterface, error) {
 	params := map[string]interface{}{
 		"hostids": []string{hostID},
-		"output":   []string{"interfaceid", "type", "main", "useip", "ip", "dns", "port"},
+		"output":  []string{"interfaceid", "type", "main", "useip", "ip", "dns", "port"},
 	}
 	var res []HostInterface
 	err := c.Call(ctx, "hostinterface.get", params, &res)
@@ -702,9 +702,9 @@ func (c *ZabbixClient) CreateAction(ctx context.Context, action *Action) (string
 
 func (c *ZabbixClient) GetAction(ctx context.Context, id string) (*Action, error) {
 	params := map[string]interface{}{
-		"actionids":    []string{id},
-		"output":       []string{"actionid", "name", "eventsource", "status", "esc_period"},
-		"selectFilter": "extend",
+		"actionids":        []string{id},
+		"output":           []string{"actionid", "name", "eventsource", "status", "esc_period"},
+		"selectFilter":     "extend",
 		"selectOperations": "extend",
 	}
 
