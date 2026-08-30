@@ -464,6 +464,11 @@ func TestHostApplyValidation_RejectsInvalidResolvedValues(t *testing.T) {
 	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "dns is required") {
 		t.Fatalf("an invalid resolved address must fail before update, got %v", diags)
 	}
+	// Partial mode is on from the first statement: a failure before the API
+	// must not persist the planned values either.
+	if st := d.State(); st != nil && st.Attributes["use_ip"] == "false" {
+		t.Fatalf("planned values must not reach the state when validation fails before the API, got %+v", st.Attributes)
+	}
 }
 
 func TestActionApplyValidation_RejectsResolvedConflicts(t *testing.T) {
@@ -497,6 +502,17 @@ func TestActionUpdate_RefusesExternalUnmanagedShapes(t *testing.T) {
 	diags := resourceAction().UpdateContext(context.Background(), d, c)
 	if !diags.HasError() || !strings.Contains(diags[0].Summary, "recovery or update operations") || !strings.Contains(diags[0].Summary, "terraform state rm") {
 		t.Fatalf("external recovery operations must refuse the update, got %v", diags)
+	}
+
+	// The preflight refuses exactly what Read refuses - e.g. a custom filter
+	// expression that appeared externally between plan and apply.
+	evalFixture := strings.Replace(base, `"evaltype":"2"`, `"evaltype":"3"`, 1)
+	c2 := fixtureServer(t, "action.get", evalFixture)
+	d2 := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{
+		"name": "a", "operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}})
+	d2.SetId("10")
+	if diags := resourceAction().UpdateContext(context.Background(), d2, c2); !diags.HasError() || !strings.Contains(diags[0].Summary, "custom condition expression") {
+		t.Fatalf("external evaltype 3 must refuse the update, got %v", diags)
 	}
 }
 
@@ -677,6 +693,46 @@ func TestMediaTypeResource_DeleteIdempotent(t *testing.T) {
 	d.SetId("9")
 	if diags := resourceMediaType().DeleteContext(context.Background(), d, c); diags.HasError() {
 		t.Fatalf("deleting an already removed media type must succeed, got %v", diags)
+	}
+}
+
+func TestMediaTypeUpdate_ClearsParametersOnExternalTypeDrift(t *testing.T) {
+	// The API-current object is a webhook with parameters (drift); applying a
+	// script configuration must clear them based on the CURRENT type, or the
+	// next Read would refuse the leftover script-with-parameters shape.
+	var updated map[string]interface{}
+	gets := 0
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "mediatype.get":
+			gets++
+			if gets == 1 {
+				return json.RawMessage(`[{"mediatypeid":"9","type":"4","name":"wh","status":"0",
+					"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+					"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"30s",
+					"parameters":[{"name":"a","value":"b"}]}]`), nil
+			}
+			return json.RawMessage(`[{"mediatypeid":"9","type":"1","name":"wh","status":"0",
+				"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+				"smtp_authentication":"0","username":"","passwd":"","exec_path":"x.sh","gsm_modem":"","script":"","timeout":"30s",
+				"parameters":[]}]`), nil
+		case "mediatype.update":
+			_ = json.Unmarshal(req.Params, &updated)
+			return map[string][]string{"mediatypeids": {"9"}}, nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceMediaType()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"name": "wh", "type": 1, "exec_path": "x.sh"})
+	d.SetId("9")
+	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatal(diags)
+	}
+	params, ok := updated["parameters"].([]interface{})
+	if !ok || len(params) != 0 {
+		t.Fatalf("a type change detected against the API state must clear parameters, got %#v", updated["parameters"])
 	}
 }
 

@@ -20,6 +20,7 @@ func resourceHost() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix host with a single main agent interface. " +
 			"Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. " +
+			"Hosts created by low-level discovery are refused - they are owned by their discovery rule. " +
 			"Every attribute of this resource is managed authoritatively: after `terraform import`, reproduce the full configuration (including `enabled`, `description` and the interface address) and review the plan before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.",
 		CreateContext: resourceHostCreate,
 		ReadContext:   resourceHostRead,
@@ -246,6 +247,10 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	// Partial mode from the very first statement: SDKv2 would otherwise write
+	// the planned values into state even when validation or the preflight read
+	// fails before any mutation (see ResourceData.Partial).
+	d.Partial(true)
 	if err := validateHostAddress(d.GetRawConfig(), d.Get); err != nil {
 		return diag.FromErr(err)
 	}

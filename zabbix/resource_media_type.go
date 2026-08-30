@@ -2,10 +2,12 @@ package zabbix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -357,6 +359,9 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 // timeout/event menu and SMS max_sessions.
 func validateMediaTypeValues(d *schema.ResourceData) error {
 	t := d.Get("type").(int)
+	if err := foreignMediaTypeFields(d.GetRawConfig(), t); err != nil {
+		return err
+	}
 	require := func(field string) error {
 		if d.Get(field).(string) == "" {
 			return fmt.Errorf("%s is required for media type %d", field, t)
@@ -406,6 +411,37 @@ func validateMediaTypeValues(d *schema.ResourceData) error {
 		}
 		if secs, err := parseZabbixDuration(d.Get("timeout").(string)); err != nil || secs < 1 || secs > 60 {
 			return fmt.Errorf("timeout must be between 1s and 60s")
+		}
+	}
+	return nil
+}
+
+// foreignMediaTypeFields rejects attributes of other transports that were
+// written in the configuration. CustomizeDiff performs the same check but
+// must skip it while `type` is unknown at plan time; this runs again on the
+// RESOLVED type before any mutation (a script next to a type that resolved
+// to email would otherwise be zeroed silently).
+func foreignMediaTypeFields(raw cty.Value, t int) error {
+	if raw.IsNull() {
+		return nil // schema test harness; a real core always sends the config
+	}
+	allowed := map[string]bool{}
+	for _, f := range mediaTypeFields[t] {
+		allowed[f] = true
+	}
+	for _, fields := range mediaTypeFields {
+		for _, f := range fields {
+			if allowed[f] || !raw.Type().HasAttribute(f) {
+				continue
+			}
+			v := raw.GetAttr(f)
+			if v.IsNull() || !v.IsKnown() {
+				continue
+			}
+			if v.Type().IsListType() && v.LengthInt() == 0 {
+				continue
+			}
+			return fmt.Errorf("%s is not supported for media type %d and would be ignored", f, t)
 		}
 	}
 	return nil
@@ -580,16 +616,27 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	// Partial mode from the very first statement: SDKv2 would otherwise write
+	// the planned values into state even when validation or the preflight read
+	// fails before any mutation (see ResourceData.Partial).
+	d.Partial(true)
 	if err := validateMediaTypeValues(d); err != nil {
 		return diag.FromErr(err)
 	}
-	// SDKv2 writes the planned values into state even when Update fails (see
-	// ResourceData.Partial); partial mode preserves the previous state until
-	// the mutation is confirmed, then the final Read refreshes everything.
-	d.Partial(true)
+	// The current type comes from the API, not from the plan: a media type
+	// whose type drifted externally between plan and apply must still get its
+	// parameters cleared on a type change - a stale plan would otherwise
+	// leave webhook parameters behind and the next Read would refuse them.
+	current, err := client.GetMediaType(ctx, d.Id())
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return diag.Errorf("media type %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to refresh and recreate it", d.Id())
+		}
+		return diag.Errorf("reading media type %s: %s", d.Id(), err)
+	}
 	mt := expandMediaType(d)
 	mt.MediaTypeID = d.Id()
-	mt.ClearParameters = d.HasChange("type")
+	mt.ClearParameters = current.Type != mt.Type
 	if err := client.UpdateMediaType(ctx, mt); err != nil {
 		return diag.Errorf("updating media type %s: %s", d.Id(), err)
 	}

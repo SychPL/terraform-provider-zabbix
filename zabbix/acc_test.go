@@ -124,7 +124,8 @@ func TestAccHost_lifecycle(t *testing.T) {
 
 	base := testAccProviderConfig() + fmt.Sprintf(`
 resource "zabbix_host_group" "g" { name = "%s-grp" }
-`, name)
+resource "zabbix_host_group" "g2" { name = "%s-grp2" }
+`, name, name)
 	// Test hosts are created disabled: an enabled host with an unroutable IP is
 	// polled by the server, whose item_rtdata writes hold row locks that block
 	// host.update/host.delete for minutes on a slow CI runner.
@@ -151,7 +152,7 @@ resource "zabbix_host" "h" {
 resource "zabbix_host" "h" {
   host    = %q
   enabled = false
-  groups  = [zabbix_host_group.g.id]
+  groups  = [zabbix_host_group.g.id, zabbix_host_group.g2.id]
   use_ip  = false
   dns     = "agent.example.test"
 }`, name)
@@ -224,6 +225,7 @@ resource "zabbix_host" "h" {
 					resource.TestCheckResourceAttr("zabbix_host.h", "use_ip", "false"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "dns", "agent.example.test"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "ip", ""),
+					resource.TestCheckResourceAttr("zabbix_host.h", "groups.#", "2"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "templates.#", "0"),
 					testAccCheckHostInterfaces(t, "zabbix_host.h", 2),
 				),

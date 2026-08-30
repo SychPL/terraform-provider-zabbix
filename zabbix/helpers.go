@@ -16,7 +16,10 @@ import (
 )
 
 // unknownMarker is the value the legacy SDK substitutes for unknown strings
-// inside set elements (sets cannot carry per-element unknown-ness).
+// inside set elements (sets cannot carry per-element unknown-ness). The SDK
+// defines it in an internal package (hcl2shim.UnknownVariableValue) that
+// cannot be imported, hence this deliberate copy; the value is stable
+// protocol surface in SDKv2.
 const unknownMarker = "74D93920-ED26-11E3-AC10-0800200C9A66"
 
 func isUnknownMarker(s string) bool { return s == unknownMarker }

@@ -519,12 +519,17 @@ func resourceActionRead(ctx context.Context, d *schema.ResourceData, m interface
 func resourceActionUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	// Partial mode from the very first statement: SDKv2 would otherwise write
+	// the planned values into state even when validation or the preflight read
+	// fails before any mutation (see ResourceData.Partial).
+	d.Partial(true)
 	if err := validateActionValues(d); err != nil {
 		return diag.FromErr(err)
 	}
-	// action.update replaces the filter and operations wholesale: shapes added
-	// outside Terraform since the last refresh (recovery/update operations,
-	// operation conditions) would be dropped silently - refuse instead.
+	// action.update replaces the filter and operations wholesale: any shape
+	// the provider cannot round-trip that appeared outside Terraform since
+	// the last refresh would be dropped silently. The full Read mapping
+	// decides, so Update refuses exactly the same set as Read.
 	current, err := client.GetAction(ctx, d.Id())
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -532,18 +537,9 @@ func resourceActionUpdate(ctx context.Context, d *schema.ResourceData, m interfa
 		}
 		return diag.Errorf("reading action %s: %s", d.Id(), err)
 	}
-	if len(current.RecoveryOperations) != 0 || len(current.UpdateOperations) != 0 {
-		return diag.Errorf("action %s gained recovery or update operations outside Terraform; updating would drop them - %s", d.Id(), unmanageableHint)
+	if _, err := flattenAction(current); err != nil {
+		return diag.Errorf("refusing to update action %s: %s", d.Id(), err)
 	}
-	for _, op := range current.Operations {
-		if len(op.OpConditions) != 0 {
-			return diag.Errorf("action %s gained operation conditions outside Terraform; updating would drop them - %s", d.Id(), unmanageableHint)
-		}
-	}
-	// SDKv2 writes the planned values into state even when Update fails (see
-	// ResourceData.Partial); partial mode preserves the previous state until
-	// the mutation is confirmed, then the final Read refreshes everything.
-	d.Partial(true)
 	action := expandAction(d)
 	action.ActionID = d.Id()
 	if err := client.UpdateAction(ctx, action); err != nil {

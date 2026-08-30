@@ -70,6 +70,15 @@
 - Release workflow: read-only ancestry preflight runs before CI and before
   the release-environment approval; write permission is limited to the
   signing job.
+- Responses larger than 32 MiB fail with an explicit size error instead of a
+  misleading JSON parse failure after silent truncation.
+- Partial state mode starts before update validation and preflight reads, so
+  an error before the first mutation cannot persist planned values either.
+- Updating an action refuses every shape Read refuses (full mapping check);
+  a media type's parameters are cleared based on the API-current type, so an
+  external type drift between plan and apply cannot leave them behind.
+- Early configure errors (missing credentials, TLS conflicts) still carry the
+  plain-HTTP and TLS warnings.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 

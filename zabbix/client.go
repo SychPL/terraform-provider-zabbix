@@ -464,9 +464,14 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 		// allocation on every failing call.
 		return fmt.Errorf("unexpected http status %d (%s) from %s", resp.StatusCode, http.StatusText(resp.StatusCode), c.url)
 	}
-	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20+1))
 	if err != nil {
 		return fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(respBytes) > 32<<20 {
+		// An explicit error beats the misleading JSON parse failure a silent
+		// truncation would produce.
+		return fmt.Errorf("response from %s exceeds 32 MiB; refusing to parse a truncated body", c.url)
 	}
 
 	var rpcResp jsonRpcResponse

@@ -75,7 +75,9 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"bad url", map[string]interface{}{"url": "ftp://x", "api_token": "t"}, "not a valid http(s) URL", ""},
 		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret-pw@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
 		{"query in url", map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php?sid=s3cret-pw", "api_token": "t"}, "query string", ""},
-		{"tls_insecure with ca_cert_file", map[string]interface{}{"url": s.URL, "api_token": "t", "tls_insecure": true, "ca_cert_file": "ca.pem"}, "mutually exclusive", ""},
+		{"tls_insecure with ca_cert_file", map[string]interface{}{"url": s.URL, "api_token": "t", "tls_insecure": true, "ca_cert_file": "ca.pem"}, "mutually exclusive", "TLS certificate verification is disabled"},
+		// Early errors must still carry the transport warnings.
+		{"no credentials remote http", map[string]interface{}{"url": "http://zabbix.invalid/api_jsonrpc.php"}, "either api_token", "plain HTTP"},
 		{"both auth methods explicit", map[string]interface{}{"url": s.URL, "api_token": "t", "username": "u", "password": "p"}, "api_token and username/password are mutually exclusive", ""},
 		{"token with stray password", map[string]interface{}{"url": s.URL, "api_token": "t", "password": "p"}, "mutually exclusive", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
@@ -280,7 +282,7 @@ func TestEnvBoolDefault(t *testing.T) {
 	t.Setenv("ZABBIX_TLS_INSECURE", "true")
 	d = schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": "https://x", "api_token": "t", "ca_cert_file": "ca.pem"})
 	_, diags := providerConfigure(context.Background(), d)
-	if !diags.HasError() || !strings.Contains(diags[0].Summary, "mutually exclusive") {
+	if !diags.HasError() || !diagContains(diags, diag.Error, "mutually exclusive") {
 		t.Errorf("ZABBIX_TLS_INSECURE=true with ca_cert_file must be rejected, got %v", diags)
 	}
 }
@@ -384,6 +386,16 @@ func TestProviderConfigure_BothAmbientMethodsConflict(t *testing.T) {
 	}
 }
 
+func TestForeignMediaTypeFields_ResolvedType(t *testing.T) {
+	raw := cty.ObjectVal(map[string]cty.Value{"script": cty.StringVal("return 1;")})
+	if err := foreignMediaTypeFields(raw, mediaTypeEmail); err == nil || !strings.Contains(err.Error(), "script is not supported") {
+		t.Fatalf("a webhook script next to a type that resolved to email must fail, got %v", err)
+	}
+	if err := foreignMediaTypeFields(raw, mediaTypeWebhook); err != nil {
+		t.Fatalf("script on a webhook is fine, got %v", err)
+	}
+}
+
 func TestWrittenInRaw(t *testing.T) {
 	raw := cty.ObjectVal(map[string]cty.Value{
 		"api_token": cty.StringVal("t"),
@@ -415,7 +427,7 @@ func planDiff(t *testing.T, r *schema.Resource, raw map[string]interface{}) erro
 }
 
 // unknown is the marker the SDK uses for values not known at plan time.
-const unknown = "74D93920-ED26-11E3-AC10-0800200C9A66"
+const unknown = unknownMarker
 
 func TestCustomizeDiff_UnknownValuesAreDeferred(t *testing.T) {
 	if err := planDiff(t, resourceHost(), map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": unknown}); err != nil {

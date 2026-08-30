@@ -601,6 +601,16 @@ func TestNewZabbixClient_TLS(t *testing.T) {
 	if _, err := untrusted.GetVersion(context.Background()); err == nil {
 		t.Error("self-signed certificate must be rejected without ca_cert_file")
 	}
+
+	// tls_insecure must complete the handshake against the same self-signed
+	// server end-to-end, not merely set a flag on the transport.
+	insecure, err := NewZabbixClient(ClientConfig{URL: srv.URL, APIToken: "t", Insecure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, err := insecure.GetVersion(context.Background()); err != nil || v != "6.4.21" {
+		t.Errorf("tls_insecure request failed: v=%q err=%v", v, err)
+	}
 }
 
 func TestMediaTypeParams_TypeAware(t *testing.T) {

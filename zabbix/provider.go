@@ -86,8 +86,30 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 
 	var diags diag.Diagnostics
 
+	// URL validation and the transport warnings come first so that every later
+	// error (missing credentials, TLS conflicts, failed probes) still carries
+	// e.g. the plain-HTTP warning about secrets sent in clear text.
+	u, err := url.Parse(cfg.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, diag.Errorf("url is not a valid http(s) URL")
+	}
+	if u.User != nil {
+		return nil, diag.Errorf("url must not contain user information; use username/password or api_token instead")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return nil, diag.Errorf("url must not contain a query string or fragment")
+	}
+	diags = append(diags, plainHTTPWarning(cfg.URL)...)
+	if cfg.Insecure {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Warning,
+			Summary:  "TLS certificate verification is disabled",
+			Detail:   "tls_insecure is enabled (possibly via ZABBIX_TLS_INSECURE); the server identity is not verified.",
+		})
+	}
+
 	if cfg.APIToken == "" && (cfg.Username == "" || cfg.Password == "") {
-		return nil, diag.Errorf("either api_token or both username and password must be configured (or the ZABBIX_API_TOKEN / ZABBIX_USERNAME / ZABBIX_PASSWORD environment variables)")
+		return nil, append(diags, diag.Errorf("either api_token or both username and password must be configured (or the ZABBIX_API_TOKEN / ZABBIX_USERNAME / ZABBIX_PASSWORD environment variables)")...)
 	}
 	if cfg.APIToken != "" && (cfg.Username != "" || cfg.Password != "") {
 		// Both methods resolved (typically one of them from globally exported
@@ -112,44 +134,25 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 			})
 			cfg.APIToken = ""
 		default:
-			return nil, diag.Errorf("api_token and username/password are mutually exclusive")
+			return nil, append(diags, diag.Errorf("api_token and username/password are mutually exclusive")...)
 		}
 		// Re-validate after dropping the ambient method: the remaining explicit
 		// credentials may be incomplete (e.g. username in HCL without password
 		// must not silently fall back to a login with an empty password).
 		if cfg.APIToken == "" && (cfg.Username == "" || cfg.Password == "") {
-			return nil, diag.Errorf("both username and password must be configured (the API token from the environment is ignored for explicitly configured credentials)")
+			return nil, append(diags, diag.Errorf("both username and password must be configured (the API token from the environment is ignored for explicitly configured credentials)")...)
 		}
 	}
 	// Checked here, not with ConflictsWith: both attributes have environment
 	// defaults, and a default must neither trigger a false conflict nor let
 	// tls_insecure silently disable the verification a CA file asks for.
 	if cfg.Insecure && cfg.CACertFile != "" {
-		return nil, diag.Errorf("tls_insecure and ca_cert_file are mutually exclusive")
-	}
-
-	u, err := url.Parse(cfg.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, diag.Errorf("url is not a valid http(s) URL")
-	}
-	if u.User != nil {
-		return nil, diag.Errorf("url must not contain user information; use username/password or api_token instead")
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return nil, diag.Errorf("url must not contain a query string or fragment")
-	}
-	diags = append(diags, plainHTTPWarning(cfg.URL)...)
-	if cfg.Insecure {
-		diags = append(diags, diag.Diagnostic{
-			Severity: diag.Warning,
-			Summary:  "TLS certificate verification is disabled",
-			Detail:   "tls_insecure is enabled (possibly via ZABBIX_TLS_INSECURE); the server identity is not verified.",
-		})
+		return nil, append(diags, diag.Errorf("tls_insecure and ca_cert_file are mutually exclusive")...)
 	}
 
 	client, err := NewZabbixClient(cfg)
 	if err != nil {
-		return nil, diag.FromErr(err)
+		return nil, append(diags, diag.FromErr(err)...)
 	}
 
 	// Resource operations get their deadline from the resource timeouts; the

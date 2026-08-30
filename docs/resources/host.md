@@ -3,12 +3,12 @@
 page_title: "zabbix_host Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. Every attribute of this resource is managed authoritatively: after terraform import, reproduce the full configuration (including enabled, description and the interface address) and review the plan before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.
+  Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. Hosts created by low-level discovery are refused - they are owned by their discovery rule. Every attribute of this resource is managed authoritatively: after terraform import, reproduce the full configuration (including enabled, description and the interface address) and review the plan before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.
 ---
 
 # zabbix_host (Resource)
 
-Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. Every attribute of this resource is managed authoritatively: after `terraform import`, reproduce the full configuration (including `enabled`, `description` and the interface address) and review the plan before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.
+Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. Hosts created by low-level discovery are refused - they are owned by their discovery rule. Every attribute of this resource is managed authoritatively: after `terraform import`, reproduce the full configuration (including `enabled`, `description` and the interface address) and review the plan before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.
 
 ## Example Usage
 
