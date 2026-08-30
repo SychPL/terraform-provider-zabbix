@@ -2,31 +2,71 @@ package zabbix
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 	"time"
 )
 
-type ZabbixClient struct {
+// ErrNotFound is returned by Get* methods when the API returned an empty result
+// set. Note that Zabbix returns an empty set both when the object does not exist
+// and when the current user has no permission to see it.
+var ErrNotFound = errors.New("object not found")
+
+// errNoAuth is returned when a request that requires authentication is attempted
+// without a session token and no credentials are configured to obtain one.
+var errNoAuth = errors.New("no authentication token available")
+
+const (
+	// sessionTerminated is the JSON-RPC error data Zabbix returns for an expired
+	// or invalid session token.
+	sessionTerminated = "Session terminated, re-login, please."
+	// objectMissing is the JSON-RPC error data Zabbix returns when an operation
+	// refers to an object that does not exist or is not visible to the user.
+	objectMissing = "No permissions to referred object or it does not exist!"
+)
+
+// version is set at build time via -ldflags "-X main.version=..." and is
+// forwarded from main; it is reported in the User-Agent header.
+var Version = "dev"
+
+type ClientConfig struct {
 	URL        string
 	Username   string
 	Password   string
-	AuthToken  string
-	HTTPClient *http.Client
+	APIToken   string
+	Insecure   bool
+	CACertFile string
+	Timeout    time.Duration
 }
 
-type JsonRpcRequest struct {
+type ZabbixClient struct {
+	url        string
+	username   string
+	password   string
+	apiToken   string
+	httpClient *http.Client
+
+	mu    sync.Mutex
+	token string
+}
+
+type jsonRpcRequest struct {
 	Jsonrpc string      `json:"jsonrpc"`
 	Method  string      `json:"method"`
 	Params  interface{} `json:"params"`
 	ID      int         `json:"id"`
-	Auth    interface{} `json:"auth,omitempty"`
 }
 
-type JsonRpcResponse struct {
+type jsonRpcResponse struct {
 	Jsonrpc string          `json:"jsonrpc"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *JsonRpcError   `json:"error,omitempty"`
@@ -43,17 +83,34 @@ func (e *JsonRpcError) Error() string {
 	return fmt.Sprintf("Zabbix API Error %d: %s (%s)", e.Code, e.Message, e.Data)
 }
 
+// IsObjectMissing reports whether err is a Zabbix API error stating that a
+// referred object does not exist (or is not visible to the current user).
+func IsObjectMissing(err error) bool {
+	var rpcErr *JsonRpcError
+	return errors.As(err, &rpcErr) && rpcErr.Data == objectMissing
+}
+
+func isSessionTerminated(err error) bool {
+	var rpcErr *JsonRpcError
+	return errors.As(err, &rpcErr) && rpcErr.Data == sessionTerminated
+}
+
+// --- API object models ---
+
 type HostGroup struct {
 	GroupID string `json:"groupid"`
 	Name    string `json:"name"`
 }
 
 type Host struct {
-	HostID     string           `json:"hostid"`
-	Host       string           `json:"host"`
-	Groups     []HostGroupRef   `json:"groups"`
-	ParentTemplates []TemplateRef `json:"parentTemplates,omitempty"`
-	Interfaces []HostInterface  `json:"interfaces"`
+	HostID          string          `json:"hostid"`
+	Host            string          `json:"host"`
+	Name            string          `json:"name"`
+	Status          string          `json:"status"` // "0" = monitored, "1" = unmonitored
+	Description     string          `json:"description"`
+	Groups          []HostGroupRef  `json:"hostgroups"`
+	ParentTemplates []TemplateRef   `json:"parentTemplates"`
+	Interfaces      []HostInterface `json:"interfaces"`
 }
 
 type HostGroupRef struct {
@@ -67,26 +124,53 @@ type TemplateRef struct {
 type HostInterface struct {
 	InterfaceID string `json:"interfaceid,omitempty"`
 	Type        string `json:"type"`  // "1" = Agent, "2" = SNMP, "3" = IPMI, "4" = JMX
-	Main        string `json:"main"`  // "1" = default
-	UseIP       string `json:"useip"` // "1" = IP, "0" = DNS
+	Main        string `json:"main"`  // "1" = default interface of its type
+	UseIP       string `json:"useip"` // "1" = connect via IP, "0" = via DNS
 	IP          string `json:"ip"`
 	DNS         string `json:"dns"`
 	Port        string `json:"port"`
 }
 
+// AgentInterface returns the main agent interface of the host, or nil.
+func (h *Host) AgentInterface() *HostInterface {
+	for i := range h.Interfaces {
+		if h.Interfaces[i].Type == "1" && h.Interfaces[i].Main == "1" {
+			return &h.Interfaces[i]
+		}
+	}
+	return nil
+}
+
+type HostSpec struct {
+	Host        string
+	Name        string
+	Status      string
+	Description string
+	GroupIDs    []string
+	TemplateIDs []string
+	Interface   HostInterface
+}
+
 type MediaType struct {
-	MediaTypeID string           `json:"mediatypeid,omitempty"`
-	Name        string           `json:"name"`
-	Type        string           `json:"type"` // "0" = Email, "1" = Script, "2" = SMS, "4" = Webhook
-	Status      string           `json:"status"` // "0" = enabled, "1" = disabled
-	SMTPServer  string           `json:"smtp_server,omitempty"`
-	SMTPHelo    string           `json:"smtp_helo,omitempty"`
-	SMTPEmail   string           `json:"smtp_email,omitempty"`
-	ExecPath    string           `json:"exec_path,omitempty"`
-	GSMModem    string           `json:"gsm_modem,omitempty"`
-	Script      string           `json:"script,omitempty"`
-	Timeout     string           `json:"timeout,omitempty"`
-	Parameters  []MediaTypeParam `json:"parameters,omitempty"`
+	MediaTypeID        string           `json:"mediatypeid,omitempty"`
+	Name               string           `json:"name"`
+	Type               string           `json:"type"`   // "0" = Email, "1" = Script, "2" = SMS, "4" = Webhook
+	Status             string           `json:"status"` // "0" = enabled, "1" = disabled
+	SMTPServer         string           `json:"smtp_server"`
+	SMTPPort           string           `json:"smtp_port"`
+	SMTPHelo           string           `json:"smtp_helo"`
+	SMTPEmail          string           `json:"smtp_email"`
+	SMTPSecurity       string           `json:"smtp_security"`
+	SMTPVerifyPeer     string           `json:"smtp_verify_peer"`
+	SMTPVerifyHost     string           `json:"smtp_verify_host"`
+	SMTPAuthentication string           `json:"smtp_authentication"`
+	Username           string           `json:"username"`
+	Passwd             string           `json:"passwd"`
+	ExecPath           string           `json:"exec_path"`
+	GSMModem           string           `json:"gsm_modem"`
+	Script             string           `json:"script"`
+	Timeout            string           `json:"timeout"`
+	Parameters         []MediaTypeParam `json:"parameters"`
 }
 
 type MediaTypeParam struct {
@@ -95,517 +179,469 @@ type MediaTypeParam struct {
 }
 
 type Action struct {
-	ActionID    string            `json:"actionid,omitempty"`
-	Name        string            `json:"name"`
-	EventSource string            `json:"eventsource"` // string
-	Status      string            `json:"status"`      // string
-	EscPeriod   string            `json:"esc_period,omitempty"`
-	Filter      ActionFilter      `json:"filter"`
-	Operations  []ActionOperation `json:"operations,omitempty"`
+	ActionID         string            `json:"actionid,omitempty"`
+	Name             string            `json:"name"`
+	EventSource      string            `json:"eventsource"`
+	Status           string            `json:"status"`
+	EscPeriod        string            `json:"esc_period"`
+	PauseSuppressed  string            `json:"pause_suppressed"`
+	NotifyIfCanceled string            `json:"notify_if_canceled"`
+	Filter           ActionFilter      `json:"filter"`
+	Operations       []ActionOperation `json:"operations"`
 }
 
 type ActionFilter struct {
-	EvalType   string            `json:"evaltype"` // string
+	EvalType   string            `json:"evaltype"`
 	Conditions []ActionCondition `json:"conditions"`
 }
 
 type ActionCondition struct {
-	ConditionType string `json:"conditiontype"` // string
-	Operator      string `json:"operator"`      // string
+	ConditionType string `json:"conditiontype"`
+	Operator      string `json:"operator"`
 	Value         string `json:"value"`
 }
 
 type ActionOperation struct {
-	OperationType string                 `json:"operationtype"` // string
-	EscPeriod     string                 `json:"esc_period,omitempty"`
-	EscStepFrom   string                 `json:"esc_step_from,omitempty"`
-	EscStepTo     string                 `json:"esc_step_to,omitempty"`
-	OpMessage     *ActionOpMessage       `json:"opmessage,omitempty"`
-	OpMessageGrp  []ActionOpMessageGrp   `json:"opmessage_grp,omitempty"`
+	OperationType string           `json:"operationtype"`
+	EscPeriod     string           `json:"esc_period"`
+	EscStepFrom   string           `json:"esc_step_from"`
+	EscStepTo     string           `json:"esc_step_to"`
+	OpMessage     *ActionOpMessage `json:"opmessage,omitempty"`
+	// Always sent (possibly empty): Zabbix keeps existing recipients when the
+	// field is omitted from action.update.
+	OpMessageGrp []ActionOpMessageGrp `json:"opmessage_grp"`
+	OpMessageUsr []ActionOpMessageUsr `json:"opmessage_usr"`
 }
 
 type ActionOpMessage struct {
-	MediaTypeID string `json:"mediatypeid,omitempty"`
-	DefaultMsg  string `json:"default_msg"` // string
-	Subject     string `json:"subject,omitempty"`
-	Message     string `json:"message,omitempty"`
+	MediaTypeID string `json:"mediatypeid"`
+	DefaultMsg  string `json:"default_msg"`
+	Subject     string `json:"subject,omitempty"` // only allowed when DefaultMsg == "0"
+	Message     string `json:"message,omitempty"` // only allowed when DefaultMsg == "0"
 }
 
 type ActionOpMessageGrp struct {
 	Usrgrpid string `json:"usrgrpid"`
 }
 
-func NewZabbixClient(url, username, password string) *ZabbixClient {
-	return &ZabbixClient{
-		URL:      url,
-		Username: username,
-		Password: password,
-		HTTPClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
-	}
+type ActionOpMessageUsr struct {
+	UserID string `json:"userid"`
 }
 
-func (c *ZabbixClient) Call(method string, params interface{}, result interface{}) error {
-	reqID := 1
-	reqPayload := JsonRpcRequest{
-		Jsonrpc: "2.0",
-		Method:  method,
-		Params:  params,
-		ID:      reqID,
+// --- Client ---
+
+func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.Insecure {
+		tlsCfg.InsecureSkipVerify = true // #nosec G402 - explicit user opt-in
+	}
+	if cfg.CACertFile != "" {
+		pem, err := os.ReadFile(cfg.CACertFile)
+		if err != nil {
+			return nil, fmt.Errorf("reading ca_cert_file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("ca_cert_file %q contains no valid PEM certificates", cfg.CACertFile)
+		}
+		tlsCfg.RootCAs = pool
+	}
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+
+	return &ZabbixClient{
+		url:        cfg.URL,
+		username:   cfg.Username,
+		password:   cfg.Password,
+		apiToken:   cfg.APIToken,
+		token:      cfg.APIToken,
+		httpClient: &http.Client{Timeout: timeout, Transport: transport},
+	}, nil
+}
+
+// TLSConfig exposes the transport TLS configuration (used by tests).
+func (c *ZabbixClient) TLSConfig() *tls.Config {
+	return c.httpClient.Transport.(*http.Transport).TLSClientConfig
+}
+
+func (c *ZabbixClient) currentToken() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.token
+}
+
+// Call performs an authenticated JSON-RPC call. If the session has expired and
+// the client was configured with username/password, it re-authenticates once
+// (single-flight across goroutines) and retries. The retry is safe: Zabbix
+// rejects the request before executing it when the session is invalid.
+func (c *ZabbixClient) Call(ctx context.Context, method string, params interface{}, result interface{}) error {
+	token := c.currentToken()
+	if token == "" {
+		if c.apiToken != "" || c.username == "" {
+			return errNoAuth
+		}
+		if err := c.login(ctx, ""); err != nil {
+			return err
+		}
+		token = c.currentToken()
 	}
 
-	// Attach Auth Token if logged in
-	if c.AuthToken != "" && method != "user.login" && method != "apiinfo.version" {
-		reqPayload.Auth = c.AuthToken
+	err := c.rawCall(ctx, method, params, token, result)
+	if err == nil || !isSessionTerminated(err) || c.apiToken != "" {
+		return err
 	}
 
-	reqBytes, err := json.Marshal(reqPayload)
+	if err := c.login(ctx, token); err != nil {
+		return err
+	}
+	return c.rawCall(ctx, method, params, c.currentToken(), result)
+}
+
+// login obtains a new session token. staleToken is the token that was observed
+// to be invalid; if another goroutine already replaced it, login is skipped.
+func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token != staleToken {
+		return nil
+	}
+	var token string
+	params := map[string]string{"username": c.username, "password": c.password}
+	if err := c.rawCall(ctx, "user.login", params, "", &token); err != nil {
+		return fmt.Errorf("user.login failed: %w", err)
+	}
+	c.token = token
+	return nil
+}
+
+// Login authenticates eagerly. It is a no-op when an API token is configured.
+func (c *ZabbixClient) Login(ctx context.Context) error {
+	if c.apiToken != "" {
+		return nil
+	}
+	return c.login(ctx, c.currentToken())
+}
+
+func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interface{}, token string, result interface{}) error {
+	reqBytes, err := json.Marshal(jsonRpcRequest{Jsonrpc: "2.0", Method: method, Params: params, ID: 1})
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := c.HTTPClient.Post(c.URL, "application/json-rpc", bytes.NewBuffer(reqBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(reqBytes))
+	if err != nil {
+		return fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json-rpc")
+	req.Header.Set("User-Agent", "terraform-provider-zabbix/"+Version)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected http status code: %d", resp.StatusCode)
-	}
-
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return fmt.Errorf("failed to read response: %w", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected http status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
+	}
 
-	var rpcResp JsonRpcResponse
+	var rpcResp jsonRpcResponse
 	if err := json.Unmarshal(respBytes, &rpcResp); err != nil {
 		return fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
 	if rpcResp.Error != nil {
 		return rpcResp.Error
 	}
-
 	if result != nil {
 		if err := json.Unmarshal(rpcResp.Result, result); err != nil {
 			return fmt.Errorf("failed to parse result: %w", err)
 		}
 	}
-
 	return nil
 }
 
-func (c *ZabbixClient) Login() error {
-	params := map[string]string{
-		"username": c.Username,
-		"password": c.Password,
-	}
-
-	var token string
-	err := c.Call("user.login", params, &token)
-	if err != nil {
-		return err
-	}
-
-	c.AuthToken = token
-	return nil
-}
-
-// --- HOST GROUP CRUD ---
-
-func (c *ZabbixClient) CreateHostGroup(name string) (string, error) {
-	params := map[string]string{
-		"name": name,
-	}
-
-	var res map[string][]string
-	err := c.Call("hostgroup.create", params, &res)
-	if err != nil {
-		return "", err
-	}
-
-	ids, ok := res["groupids"]
-	if !ok || len(ids) == 0 {
-		return "", fmt.Errorf("no groupids returned from Zabbix")
-	}
-
-	return ids[0], nil
-}
-
-func (c *ZabbixClient) GetHostGroup(id string) (*HostGroup, error) {
-	params := map[string]interface{}{
-		"groupids": []string{id},
-		"output":   []string{"groupid", "name"},
-	}
-
-	var res []HostGroup
-	err := c.Call("hostgroup.get", params, &res)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(res) == 0 {
-		return nil, fmt.Errorf("host group %s not found", id)
-	}
-
-	return &res[0], nil
-}
-
-func (c *ZabbixClient) UpdateHostGroup(id string, name string) error {
-	params := map[string]string{
-		"groupid": id,
-		"name":    name,
-	}
-
-	var res map[string][]string
-	return c.Call("hostgroup.update", params, &res)
-}
-
-func (c *ZabbixClient) DeleteHostGroup(id string) error {
-	params := []string{id}
-	var res map[string][]string
-	return c.Call("hostgroup.delete", params, &res)
-}
-
-// --- HOST CRUD ---
-
-func (c *ZabbixClient) CreateHost(name string, groupIds []string, templateIds []string, ip, port string) (string, error) {
-	groups := make([]HostGroupRef, len(groupIds))
-	for i, id := range groupIds {
-		groups[i] = HostGroupRef{GroupID: id}
-	}
-
-	templates := make([]TemplateRef, len(templateIds))
-	for i, id := range templateIds {
-		templates[i] = TemplateRef{TemplateID: id}
-	}
-
-	interfaces := []HostInterface{
-		{
-			Type:  "1", // Agent
-			Main:  "1", // Default interface
-			UseIP: "1", // Use IP
-			IP:    ip,
-			DNS:   "",
-			Port:  port,
-		},
-	}
-
-	params := map[string]interface{}{
-		"host":       name,
-		"groups":     groups,
-		"interfaces": interfaces,
-	}
-
-	if len(templates) > 0 {
-		params["templates"] = templates
-	}
-
-	var res map[string][]string
-	err := c.Call("host.create", params, &res)
-	if err != nil {
-		return "", err
-	}
-
-	ids, ok := res["hostids"]
-	if !ok || len(ids) == 0 {
-		return "", fmt.Errorf("no hostids returned from Zabbix")
-	}
-
-	return ids[0], nil
-}
-
-func (c *ZabbixClient) GetHost(id string) (*Host, error) {
-	params := map[string]interface{}{
-		"hostids":          []string{id},
-		"output":           []string{"hostid", "host"},
-		"selectGroups":     []string{"groupid"},
-		"selectParentTemplates": []string{"templateid"},
-		"selectInterfaces": []string{"interfaceid", "ip", "port"},
-	}
-
-	var res []Host
-	err := c.Call("host.get", params, &res)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(res) == 0 {
-		return nil, fmt.Errorf("host %s not found", id)
-	}
-
-	return &res[0], nil
-}
-
-func (c *ZabbixClient) UpdateHost(id string, name string, groupIds []string, templateIds []string, ip, port string) error {
-	groups := make([]HostGroupRef, len(groupIds))
-	for i, gid := range groupIds {
-		groups[i] = HostGroupRef{GroupID: gid}
-	}
-
-	templates := make([]TemplateRef, len(templateIds))
-	for i, tid := range templateIds {
-		templates[i] = TemplateRef{TemplateID: tid}
-	}
-
-	// In Zabbix, updating interfaces is tricky. Usually we want to update the main agent interface.
-	// First we fetch the existing host's interfaces to get the interface ID.
-	existing, err := c.GetHost(id)
-	if err != nil {
-		return err
-	}
-
-	interfaces := []HostInterface{
-		{
-			Type:  "1",
-			Main:  "1",
-			UseIP: "1",
-			IP:    ip,
-			DNS:   "",
-			Port:  port,
-		},
-	}
-
-	// Reuse existing interfaceid if possible
-	if len(existing.Interfaces) > 0 {
-		interfaces[0].InterfaceID = existing.Interfaces[0].InterfaceID
-	}
-
-	params := map[string]interface{}{
-		"hostid":     id,
-		"host":       name,
-		"groups":     groups,
-		"interfaces": interfaces,
-	}
-
-	if len(templates) > 0 {
-		params["templates"] = templates
-	} else {
-		// Clear templates by sending empty array if none defined
-		params["templates"] = []TemplateRef{}
-	}
-
-	var res map[string][]string
-	return c.Call("host.update", params, &res)
-}
-
-func (c *ZabbixClient) DeleteHost(id string) error {
-	params := []string{id}
-	var res map[string][]string
-	return c.Call("host.delete", params, &res)
-}
-
-func (c *ZabbixClient) GetVersion() (string, error) {
+// GetVersion calls apiinfo.version (unauthenticated).
+func (c *ZabbixClient) GetVersion(ctx context.Context) (string, error) {
 	var version string
-	err := c.Call("apiinfo.version", map[string]interface{}{}, &version)
-	if err != nil {
+	if err := c.rawCall(ctx, "apiinfo.version", []interface{}{}, "", &version); err != nil {
 		return "", err
 	}
 	return version, nil
 }
 
-// --- MEDIA TYPE CRUD ---
-
-func (c *ZabbixClient) CreateMediaType(mediaType *MediaType) (string, error) {
-	params := map[string]interface{}{
-		"name":   mediaType.Name,
-		"type":   mediaType.Type,
-		"status": mediaType.Status,
+func firstID(res map[string][]string, key string) (string, error) {
+	ids := res[key]
+	if len(ids) == 0 {
+		return "", fmt.Errorf("no %s returned from Zabbix", key)
 	}
-
-	if mediaType.SMTPServer != "" {
-		params["smtp_server"] = mediaType.SMTPServer
-	}
-	if mediaType.SMTPHelo != "" {
-		params["smtp_helo"] = mediaType.SMTPHelo
-	}
-	if mediaType.SMTPEmail != "" {
-		params["smtp_email"] = mediaType.SMTPEmail
-	}
-	if mediaType.ExecPath != "" {
-		params["exec_path"] = mediaType.ExecPath
-	}
-	if mediaType.GSMModem != "" {
-		params["gsm_modem"] = mediaType.GSMModem
-	}
-	if mediaType.Script != "" {
-		params["script"] = mediaType.Script
-	}
-	if mediaType.Timeout != "" {
-		params["timeout"] = mediaType.Timeout
-	}
-	if len(mediaType.Parameters) > 0 {
-		params["parameters"] = mediaType.Parameters
-	}
-
-	var res map[string][]string
-	err := c.Call("mediatype.create", params, &res)
-	if err != nil {
-		return "", err
-	}
-
-	ids, ok := res["mediatypeids"]
-	if !ok || len(ids) == 0 {
-		return "", fmt.Errorf("no mediatypeids returned from Zabbix")
-	}
-
 	return ids[0], nil
 }
 
-func (c *ZabbixClient) GetMediaType(id string) (*MediaType, error) {
-	params := map[string]interface{}{
-		"mediatypeids":     []string{id},
-		"output":           []string{"mediatypeid", "name", "type", "status", "smtp_server", "smtp_helo", "smtp_email", "exec_path", "gsm_modem", "script", "timeout"},
-		"selectParameters": "extend",
-	}
+// --- HOST GROUP ---
 
-	var res []MediaType
-	err := c.Call("mediatype.get", params, &res)
-	if err != nil {
+func (c *ZabbixClient) CreateHostGroup(ctx context.Context, name string) (string, error) {
+	var res map[string][]string
+	if err := c.Call(ctx, "hostgroup.create", map[string]string{"name": name}, &res); err != nil {
+		return "", err
+	}
+	return firstID(res, "groupids")
+}
+
+func (c *ZabbixClient) GetHostGroup(ctx context.Context, id string) (*HostGroup, error) {
+	params := map[string]interface{}{
+		"groupids": []string{id},
+		"output":   []string{"groupid", "name"},
+	}
+	var res []HostGroup
+	if err := c.Call(ctx, "hostgroup.get", params, &res); err != nil {
 		return nil, err
 	}
-
 	if len(res) == 0 {
-		return nil, fmt.Errorf("media type %s not found", id)
+		return nil, ErrNotFound
 	}
-
 	return &res[0], nil
 }
 
-func (c *ZabbixClient) UpdateMediaType(mediaType *MediaType) error {
-	params := map[string]interface{}{
-		"mediatypeid": mediaType.MediaTypeID,
-		"name":        mediaType.Name,
-		"type":        mediaType.Type,
-		"status":      mediaType.Status,
-	}
-
-	if mediaType.SMTPServer != "" {
-		params["smtp_server"] = mediaType.SMTPServer
-	}
-	if mediaType.SMTPHelo != "" {
-		params["smtp_helo"] = mediaType.SMTPHelo
-	}
-	if mediaType.SMTPEmail != "" {
-		params["smtp_email"] = mediaType.SMTPEmail
-	}
-	if mediaType.ExecPath != "" {
-		params["exec_path"] = mediaType.ExecPath
-	}
-	if mediaType.GSMModem != "" {
-		params["gsm_modem"] = mediaType.GSMModem
-	}
-	if mediaType.Script != "" {
-		params["script"] = mediaType.Script
-	}
-	if mediaType.Timeout != "" {
-		params["timeout"] = mediaType.Timeout
-	}
-	// In Zabbix 6.4, updating webhook parameters overwrites them
-	if mediaType.Type == "4" {
-		params["parameters"] = mediaType.Parameters
-	} else {
-		// Non-webhooks should have empty/no parameters passed
-		params["parameters"] = []interface{}{}
-	}
-
-	var res map[string][]string
-	return c.Call("mediatype.update", params, &res)
+func (c *ZabbixClient) UpdateHostGroup(ctx context.Context, id, name string) error {
+	return c.Call(ctx, "hostgroup.update", map[string]string{"groupid": id, "name": name}, nil)
 }
 
-func (c *ZabbixClient) DeleteMediaType(id string) error {
-	params := []string{id}
-	var res map[string][]string
-	return c.Call("mediatype.delete", params, &res)
+func (c *ZabbixClient) DeleteHostGroup(ctx context.Context, id string) error {
+	return c.Call(ctx, "hostgroup.delete", []string{id}, nil)
 }
 
-// --- ACTION CRUD ---
+// --- HOST ---
 
-func (c *ZabbixClient) CreateAction(action *Action) (string, error) {
-	// Build base parameters
-	params := map[string]interface{}{
-		"name":        action.Name,
-		"eventsource": action.EventSource,
-		"status":      action.Status,
-		"filter":      action.Filter,
-		"operations":  action.Operations,
+func groupRefs(ids []string) []HostGroupRef {
+	refs := make([]HostGroupRef, len(ids))
+	for i, id := range ids {
+		refs[i] = HostGroupRef{GroupID: id}
 	}
+	return refs
+}
 
-	if action.EscPeriod != "" {
-		params["esc_period"] = action.EscPeriod
+func templateRefs(ids []string) []TemplateRef {
+	refs := make([]TemplateRef, len(ids))
+	for i, id := range ids {
+		refs[i] = TemplateRef{TemplateID: id}
 	}
+	return refs
+}
 
-	// Make sure operations is at least an empty array if empty
-	if len(action.Operations) == 0 {
-		params["operations"] = []interface{}{}
+func hostParams(spec *HostSpec) map[string]interface{} {
+	return map[string]interface{}{
+		"host":        spec.Host,
+		"name":        spec.Name,
+		"status":      spec.Status,
+		"description": spec.Description,
+		"groups":      groupRefs(spec.GroupIDs),
+		"templates":   templateRefs(spec.TemplateIDs),
 	}
+}
 
-	debugBytes, _ := json.Marshal(params)
-	fmt.Fprintf(os.Stderr, "[DEBUG ZABBIX] action.create params: %s\n", string(debugBytes))
+func (c *ZabbixClient) CreateHost(ctx context.Context, spec *HostSpec) (string, error) {
+	params := hostParams(spec)
+	iface := spec.Interface
+	iface.Type, iface.Main = "1", "1"
+	params["interfaces"] = []HostInterface{iface}
 
 	var res map[string][]string
-	err := c.Call("action.create", params, &res)
-	if err != nil {
+	if err := c.Call(ctx, "host.create", params, &res); err != nil {
 		return "", err
 	}
-
-	ids, ok := res["actionids"]
-	if !ok || len(ids) == 0 {
-		return "", fmt.Errorf("no actionids returned from Zabbix")
-	}
-
-	return ids[0], nil
+	return firstID(res, "hostids")
 }
 
-func (c *ZabbixClient) GetAction(id string) (*Action, error) {
+func (c *ZabbixClient) GetHost(ctx context.Context, id string) (*Host, error) {
 	params := map[string]interface{}{
-		"actionids":    []string{id},
-		"output":       []string{"actionid", "name", "eventsource", "status", "esc_period"},
-		"selectFilter": "extend",
+		"hostids":               []string{id},
+		"output":                []string{"hostid", "host", "name", "status", "description"},
+		"selectHostGroups":      []string{"groupid"},
+		"selectParentTemplates": []string{"templateid"},
+		"selectInterfaces":      []string{"interfaceid", "type", "main", "useip", "ip", "dns", "port"},
+	}
+	var res []Host
+	if err := c.Call(ctx, "host.get", params, &res); err != nil {
+		return nil, err
+	}
+	if len(res) == 0 {
+		return nil, ErrNotFound
+	}
+	return &res[0], nil
+}
+
+// UpdateHost updates host properties, group and template links. Interfaces are
+// intentionally NOT sent through host.update (which replaces the whole
+// collection); use UpdateHostInterface for that. Templates present in
+// templatesClear are unlinked and their inherited entities removed.
+func (c *ZabbixClient) UpdateHost(ctx context.Context, id string, spec *HostSpec, templatesClear []string) error {
+	params := hostParams(spec)
+	params["hostid"] = id
+	if len(templatesClear) > 0 {
+		params["templates_clear"] = templateRefs(templatesClear)
+	}
+	return c.Call(ctx, "host.update", params, nil)
+}
+
+func (c *ZabbixClient) UpdateHostInterface(ctx context.Context, iface HostInterface) error {
+	params := map[string]interface{}{
+		"interfaceid": iface.InterfaceID,
+		"useip":       iface.UseIP,
+		"ip":          iface.IP,
+		"dns":         iface.DNS,
+		"port":        iface.Port,
+	}
+	return c.Call(ctx, "hostinterface.update", params, nil)
+}
+
+func (c *ZabbixClient) DeleteHost(ctx context.Context, id string) error {
+	return c.Call(ctx, "host.delete", []string{id}, nil)
+}
+
+// --- MEDIA TYPE ---
+
+// mediaTypeParams serialises only the fields relevant for the media type's
+// type; irrelevant fields are neither sent nor cleared.
+func mediaTypeParams(mt *MediaType) map[string]interface{} {
+	params := map[string]interface{}{
+		"name":   mt.Name,
+		"type":   mt.Type,
+		"status": mt.Status,
+	}
+	switch mt.Type {
+	case "0": // Email
+		params["smtp_server"] = mt.SMTPServer
+		params["smtp_port"] = mt.SMTPPort
+		params["smtp_helo"] = mt.SMTPHelo
+		params["smtp_email"] = mt.SMTPEmail
+		params["smtp_security"] = mt.SMTPSecurity
+		params["smtp_verify_peer"] = mt.SMTPVerifyPeer
+		params["smtp_verify_host"] = mt.SMTPVerifyHost
+		params["smtp_authentication"] = mt.SMTPAuthentication
+		if mt.SMTPAuthentication == "1" {
+			params["username"] = mt.Username
+			params["passwd"] = mt.Passwd
+		}
+	case "1": // Script
+		params["exec_path"] = mt.ExecPath
+	case "2": // SMS
+		params["gsm_modem"] = mt.GSMModem
+	case "4": // Webhook
+		params["script"] = mt.Script
+		params["timeout"] = mt.Timeout
+		p := mt.Parameters
+		if p == nil {
+			p = []MediaTypeParam{}
+		}
+		params["parameters"] = p
+	}
+	return params
+}
+
+func (c *ZabbixClient) CreateMediaType(ctx context.Context, mt *MediaType) (string, error) {
+	var res map[string][]string
+	if err := c.Call(ctx, "mediatype.create", mediaTypeParams(mt), &res); err != nil {
+		return "", err
+	}
+	return firstID(res, "mediatypeids")
+}
+
+func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType, error) {
+	params := map[string]interface{}{
+		"mediatypeids": []string{id},
+		"output": []string{"mediatypeid", "name", "type", "status",
+			"smtp_server", "smtp_port", "smtp_helo", "smtp_email", "smtp_security",
+			"smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "passwd",
+			"exec_path", "gsm_modem", "script", "timeout", "parameters"},
+	}
+	var res []MediaType
+	if err := c.Call(ctx, "mediatype.get", params, &res); err != nil {
+		return nil, err
+	}
+	if len(res) == 0 {
+		return nil, ErrNotFound
+	}
+	return &res[0], nil
+}
+
+func (c *ZabbixClient) UpdateMediaType(ctx context.Context, mt *MediaType) error {
+	params := mediaTypeParams(mt)
+	params["mediatypeid"] = mt.MediaTypeID
+	return c.Call(ctx, "mediatype.update", params, nil)
+}
+
+func (c *ZabbixClient) DeleteMediaType(ctx context.Context, id string) error {
+	return c.Call(ctx, "mediatype.delete", []string{id}, nil)
+}
+
+// --- ACTION ---
+
+func actionParams(action *Action) map[string]interface{} {
+	ops := action.Operations
+	if ops == nil {
+		ops = []ActionOperation{}
+	}
+	conds := action.Filter.Conditions
+	if conds == nil {
+		conds = []ActionCondition{}
+	}
+	return map[string]interface{}{
+		"name":               action.Name,
+		"status":             action.Status,
+		"esc_period":         action.EscPeriod,
+		"pause_suppressed":   action.PauseSuppressed,
+		"notify_if_canceled": action.NotifyIfCanceled,
+		"filter":             ActionFilter{EvalType: action.Filter.EvalType, Conditions: conds},
+		"operations":         ops,
+	}
+}
+
+func (c *ZabbixClient) CreateAction(ctx context.Context, action *Action) (string, error) {
+	params := actionParams(action)
+	params["eventsource"] = action.EventSource
+	var res map[string][]string
+	if err := c.Call(ctx, "action.create", params, &res); err != nil {
+		return "", err
+	}
+	return firstID(res, "actionids")
+}
+
+func (c *ZabbixClient) GetAction(ctx context.Context, id string) (*Action, error) {
+	params := map[string]interface{}{
+		"actionids":        []string{id},
+		"output":           []string{"actionid", "name", "eventsource", "status", "esc_period", "pause_suppressed", "notify_if_canceled"},
+		"selectFilter":     "extend",
 		"selectOperations": "extend",
 	}
-
 	var res []Action
-	err := c.Call("action.get", params, &res)
-	if err != nil {
+	if err := c.Call(ctx, "action.get", params, &res); err != nil {
 		return nil, err
 	}
-
 	if len(res) == 0 {
-		return nil, fmt.Errorf("action %s not found", id)
+		return nil, ErrNotFound
 	}
-
 	return &res[0], nil
 }
 
-func (c *ZabbixClient) UpdateAction(action *Action) error {
-	params := map[string]interface{}{
-		"actionid":    action.ActionID,
-		"name":        action.Name,
-		"eventsource": action.EventSource,
-		"status":      action.Status,
-		"filter":      action.Filter,
-		"operations":  action.Operations,
-	}
-
-	if action.EscPeriod != "" {
-		params["esc_period"] = action.EscPeriod
-	}
-
-	// Make sure operations is at least an empty array if empty
-	if len(action.Operations) == 0 {
-		params["operations"] = []interface{}{}
-	}
-
-	var res map[string][]string
-	return c.Call("action.update", params, &res)
+// UpdateAction replaces filter and operations wholesale. eventsource is
+// immutable in Zabbix and therefore never sent.
+func (c *ZabbixClient) UpdateAction(ctx context.Context, action *Action) error {
+	params := actionParams(action)
+	params["actionid"] = action.ActionID
+	return c.Call(ctx, "action.update", params, nil)
 }
 
-func (c *ZabbixClient) DeleteAction(id string) error {
-	params := []string{id}
-	var res map[string][]string
-	return c.Call("action.delete", params, &res)
+func (c *ZabbixClient) DeleteAction(ctx context.Context, id string) error {
+	return c.Call(ctx, "action.delete", []string{id}, nil)
 }

@@ -3,70 +3,92 @@ package zabbix
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceAction() *schema.Resource {
 	return &schema.Resource{
+		Description: "Manages a Zabbix trigger action with \"send message\" operations. " +
+			"Recovery and update operations are not supported yet.",
 		CreateContext: resourceActionCreate,
 		ReadContext:   resourceActionRead,
 		UpdateContext: resourceActionUpdate,
 		DeleteContext: resourceActionDelete,
+		Importer:      passthroughImporter(),
+		Timeouts:      defaultTimeouts(),
+		CustomizeDiff: resourceActionCustomizeDiff,
 		Schema: map[string]*schema.Schema{
 			"name": {
-				Type:        schema.TypeString,
-				Required:    true,
-				Description: "The name of the action",
+				Type:         schema.TypeString,
+				Required:     true,
+				ValidateFunc: validation.StringIsNotWhiteSpace,
+				Description:  "Name of the action. Must be unique in Zabbix.",
 			},
 			"eventsource": {
-				Type:        schema.TypeInt,
-				Optional:    true,
-				Default:     0,
-				Description: "Event source: 0 - Triggers",
+				Type:         schema.TypeInt,
+				Optional:     true,
+				Default:      0,
+				ForceNew:     true,
+				ValidateFunc: validation.IntInSlice([]int{0}),
+				Description:  "Event source. Only 0 (trigger actions) is supported. Changing it forces a new resource.",
 			},
 			"enabled": {
 				Type:        schema.TypeBool,
 				Optional:    true,
 				Default:     true,
-				Description: "Whether the action is enabled",
+				Description: "Whether the action is enabled.",
 			},
 			"esc_period": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "1h",
-				Description: "Default operation step duration",
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "1h",
+				ValidateFunc: validateEscPeriod,
+				Description:  "Default operation step duration (at least 60s), e.g. `1h`.",
 			},
 			"evaltype": {
-				Type:        schema.TypeInt,
+				Type:         schema.TypeInt,
+				Optional:     true,
+				Default:      0,
+				ValidateFunc: validation.IntInSlice([]int{0, 1, 2}),
+				Description:  "Condition evaluation: 0 - And/Or, 1 - And, 2 - Or. Custom expressions (3) are not supported.",
+			},
+			"pause_suppressed": {
+				Type:        schema.TypeBool,
 				Optional:    true,
-				Default:     0,
-				Description: "Calculation type: 0 - AND/OR",
+				Default:     true,
+				Description: "Pause escalations for suppressed problems.",
+			},
+			"notify_if_canceled": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     true,
+				Description: "Notify about canceled escalations.",
 			},
 			"condition": {
-				Type:        schema.TypeList,
+				Type:        schema.TypeSet,
 				Optional:    true,
-				Description: "Conditions to filter events",
+				Description: "Conditions filtering the events the action reacts to. Order is not significant.",
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"conditiontype": {
 							Type:        schema.TypeInt,
 							Required:    true,
-							Description: "Condition type, e.g. 16 for Host group, 3 for Trigger name",
+							Description: "Condition type, e.g. 0 - host group, 1 - host, 2 - trigger, 3 - trigger name, 4 - trigger severity, 13 - template, 25 - event tag, 26 - event tag value.",
 						},
 						"operator": {
 							Type:        schema.TypeInt,
 							Optional:    true,
 							Default:     0,
-							Description: "Operator, e.g. 0 for equals",
+							Description: "Condition operator, e.g. 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain.",
 						},
 						"value": {
 							Type:        schema.TypeString,
 							Required:    true,
-							Description: "Value to compare",
+							Description: "Value to compare with.",
 						},
 					},
 				},
@@ -74,53 +96,72 @@ func resourceAction() *schema.Resource {
 			"operation": {
 				Type:        schema.TypeList,
 				Optional:    true,
-				Description: "Operations to perform when action runs",
+				Description: "Operations executed when the action fires. Each operation must have at least one recipient in `user_groups` or `users`.",
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"operationtype": {
-							Type:     schema.TypeInt,
-							Optional: true,
-							Default:  0, // Send message
+							Type:         schema.TypeInt,
+							Optional:     true,
+							Default:      0,
+							ValidateFunc: validation.IntInSlice([]int{0}),
+							Description:  "Operation type. Only 0 (send message) is supported.",
 						},
 						"esc_period": {
-							Type:     schema.TypeString,
-							Optional: true,
-							Default:  "0",
+							Type:         schema.TypeString,
+							Optional:     true,
+							Default:      "0",
+							ValidateFunc: validateEscPeriod,
+							Description:  "Step duration; 0 uses the action's `esc_period`.",
 						},
 						"esc_step_from": {
-							Type:     schema.TypeInt,
-							Optional: true,
-							Default:  1,
+							Type:         schema.TypeInt,
+							Optional:     true,
+							Default:      1,
+							ValidateFunc: validation.IntAtLeast(1),
+							Description:  "First escalation step.",
 						},
 						"esc_step_to": {
-							Type:     schema.TypeInt,
-							Optional: true,
-							Default:  1,
+							Type:         schema.TypeInt,
+							Optional:     true,
+							Default:      1,
+							ValidateFunc: validation.IntAtLeast(0),
+							Description:  "Last escalation step; 0 means infinite.",
 						},
 						"mediatypeid": {
-							Type:     schema.TypeString,
-							Optional: true,
-							Default:  "",
+							Type:        schema.TypeString,
+							Optional:    true,
+							Default:     "0",
+							Description: "Media type used to send the message; `0` means all media types of the recipients.",
 						},
 						"default_msg": {
-							Type:     schema.TypeBool,
-							Optional: true,
-							Default:  true,
+							Type:        schema.TypeBool,
+							Optional:    true,
+							Default:     true,
+							Description: "Use the media type's default message instead of `subject`/`message`.",
 						},
 						"subject": {
-							Type:     schema.TypeString,
-							Optional: true,
-							Default:  "",
+							Type:        schema.TypeString,
+							Optional:    true,
+							Default:     "",
+							Description: "Message subject (used when `default_msg` is false).",
 						},
 						"message": {
-							Type:     schema.TypeString,
-							Optional: true,
-							Default:  "",
+							Type:        schema.TypeString,
+							Optional:    true,
+							Default:     "",
+							Description: "Message body (used when `default_msg` is false).",
 						},
 						"user_groups": {
-							Type:     schema.TypeSet,
-							Optional: true,
-							Elem:     &schema.Schema{Type: schema.TypeString},
+							Type:        schema.TypeSet,
+							Optional:    true,
+							Elem:        &schema.Schema{Type: schema.TypeString},
+							Description: "IDs of user groups to notify.",
+						},
+						"users": {
+							Type:        schema.TypeSet,
+							Optional:    true,
+							Elem:        &schema.Schema{Type: schema.TypeString},
+							Description: "IDs of users to notify.",
 						},
 					},
 				},
@@ -129,83 +170,182 @@ func resourceAction() *schema.Resource {
 	}
 }
 
+func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	for i, raw := range d.Get("operation").([]interface{}) {
+		op := raw.(map[string]interface{})
+		if len(setStrings(op["user_groups"]))+len(setStrings(op["users"])) == 0 {
+			return fmt.Errorf("operation.%d: at least one recipient in user_groups or users is required", i)
+		}
+		if op["default_msg"].(bool) && (op["subject"].(string) != "" || op["message"].(string) != "") {
+			return fmt.Errorf("operation.%d: subject/message require default_msg = false", i)
+		}
+		from, to := op["esc_step_from"].(int), op["esc_step_to"].(int)
+		if to != 0 && to < from {
+			return fmt.Errorf("operation.%d: esc_step_to (%d) must be 0 or >= esc_step_from (%d)", i, to, from)
+		}
+	}
+	return nil
+}
+
+func expandAction(d *schema.ResourceData) *Action {
+	action := &Action{
+		Name:             d.Get("name").(string),
+		EventSource:      strconv.Itoa(d.Get("eventsource").(int)),
+		Status:           boolToStatus(d.Get("enabled").(bool)),
+		EscPeriod:        d.Get("esc_period").(string),
+		PauseSuppressed:  boolToFlag(d.Get("pause_suppressed").(bool)),
+		NotifyIfCanceled: boolToFlag(d.Get("notify_if_canceled").(bool)),
+		Filter: ActionFilter{
+			EvalType:   strconv.Itoa(d.Get("evaltype").(int)),
+			Conditions: []ActionCondition{},
+		},
+		Operations: []ActionOperation{},
+	}
+
+	for _, item := range d.Get("condition").(*schema.Set).List() {
+		c := item.(map[string]interface{})
+		action.Filter.Conditions = append(action.Filter.Conditions, ActionCondition{
+			ConditionType: strconv.Itoa(c["conditiontype"].(int)),
+			Operator:      strconv.Itoa(c["operator"].(int)),
+			Value:         c["value"].(string),
+		})
+	}
+
+	for _, item := range d.Get("operation").([]interface{}) {
+		o := item.(map[string]interface{})
+		op := ActionOperation{
+			OperationType: strconv.Itoa(o["operationtype"].(int)),
+			EscPeriod:     o["esc_period"].(string),
+			EscStepFrom:   strconv.Itoa(o["esc_step_from"].(int)),
+			EscStepTo:     strconv.Itoa(o["esc_step_to"].(int)),
+			OpMessageGrp:  []ActionOpMessageGrp{},
+			OpMessageUsr:  []ActionOpMessageUsr{},
+			OpMessage: &ActionOpMessage{
+				MediaTypeID: o["mediatypeid"].(string),
+				DefaultMsg:  boolToFlag(o["default_msg"].(bool)),
+				Subject:     o["subject"].(string),
+				Message:     o["message"].(string),
+			},
+		}
+		for _, g := range setStrings(o["user_groups"]) {
+			op.OpMessageGrp = append(op.OpMessageGrp, ActionOpMessageGrp{Usrgrpid: g})
+		}
+		for _, u := range setStrings(o["users"]) {
+			op.OpMessageUsr = append(op.OpMessageUsr, ActionOpMessageUsr{UserID: u})
+		}
+		action.Operations = append(action.Operations, op)
+	}
+	return action
+}
+
+func flattenAction(action *Action) (map[string]interface{}, error) {
+	eventsource, err := atoi("eventsource", action.EventSource)
+	if err != nil {
+		return nil, err
+	}
+	evaltype, err := atoi("filter.evaltype", action.Filter.EvalType)
+	if err != nil {
+		return nil, err
+	}
+
+	conds := make([]interface{}, 0, len(action.Filter.Conditions))
+	for _, c := range action.Filter.Conditions {
+		ct, err := atoi("conditiontype", c.ConditionType)
+		if err != nil {
+			return nil, err
+		}
+		op, err := atoi("operator", c.Operator)
+		if err != nil {
+			return nil, err
+		}
+		conds = append(conds, map[string]interface{}{"conditiontype": ct, "operator": op, "value": c.Value})
+	}
+
+	ops := make([]interface{}, 0, len(action.Operations))
+	for _, o := range action.Operations {
+		opType, err := atoi("operationtype", o.OperationType)
+		if err != nil {
+			return nil, err
+		}
+		from, err := atoi("esc_step_from", o.EscStepFrom)
+		if err != nil {
+			return nil, err
+		}
+		to, err := atoi("esc_step_to", o.EscStepTo)
+		if err != nil {
+			return nil, err
+		}
+		groups := make([]string, 0, len(o.OpMessageGrp))
+		for _, g := range o.OpMessageGrp {
+			groups = append(groups, g.Usrgrpid)
+		}
+		users := make([]string, 0, len(o.OpMessageUsr))
+		for _, u := range o.OpMessageUsr {
+			users = append(users, u.UserID)
+		}
+		flat := map[string]interface{}{
+			"operationtype": opType,
+			"esc_period":    o.EscPeriod,
+			"esc_step_from": from,
+			"esc_step_to":   to,
+			"user_groups":   groups,
+			"users":         users,
+			"mediatypeid":   "0",
+			"default_msg":   true,
+			"subject":       "",
+			"message":       "",
+		}
+		if o.OpMessage != nil {
+			flat["mediatypeid"] = o.OpMessage.MediaTypeID
+			flat["default_msg"] = o.OpMessage.DefaultMsg == "1"
+			// Zabbix keeps stale subject/message values when default_msg is switched
+			// on; they are meaningless then, so they are not reflected in state.
+			if o.OpMessage.DefaultMsg == "0" {
+				flat["subject"] = o.OpMessage.Subject
+				flat["message"] = o.OpMessage.Message
+			}
+		}
+		ops = append(ops, flat)
+	}
+
+	return map[string]interface{}{
+		"name":               action.Name,
+		"eventsource":        eventsource,
+		"enabled":            action.Status == "0",
+		"esc_period":         action.EscPeriod,
+		"evaltype":           evaltype,
+		"pause_suppressed":   action.PauseSuppressed == "1",
+		"notify_if_canceled": action.NotifyIfCanceled == "1",
+		"condition":          conds,
+		"operation":          ops,
+	}, nil
+}
+
 func resourceActionCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
-	action := expandAction(d)
-	actionID, err := client.CreateAction(action)
+	id, err := client.CreateAction(ctx, expandAction(d))
 	if err != nil {
-		return diag.FromErr(err)
+		return diag.Errorf("creating action: %s", err)
 	}
-
-	d.SetId(actionID)
+	d.SetId(id)
 	return resourceActionRead(ctx, d, m)
 }
 
 func resourceActionRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
-	id := d.Id()
 
-	action, err := client.GetAction(id)
+	action, err := client.GetAction(ctx, d.Id())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG ZABBIX] GetAction error: %s\n", err)
-		d.SetId("")
-		return nil
+		return readError(ctx, d, "action", err)
 	}
-
-	d.Set("name", action.Name)
-	es, _ := strconv.Atoi(action.EventSource)
-	d.Set("eventsource", es)
-	d.Set("enabled", action.Status == "0")
-	d.Set("esc_period", action.EscPeriod)
-	et, _ := strconv.Atoi(action.Filter.EvalType)
-	d.Set("evaltype", et)
-
-	// Map conditions back
-	conds := make([]map[string]interface{}, len(action.Filter.Conditions))
-	for i, c := range action.Filter.Conditions {
-		ct, _ := strconv.Atoi(c.ConditionType)
-		op, _ := strconv.Atoi(c.Operator)
-		conds[i] = map[string]interface{}{
-			"conditiontype": ct,
-			"operator":      op,
-			"value":         c.Value,
-		}
+	values, err := flattenAction(action)
+	if err != nil {
+		return diag.FromErr(err)
 	}
-	d.Set("condition", conds)
-
-	// Map operations back
-	ops := make([]map[string]interface{}, len(action.Operations))
-	for i, op := range action.Operations {
-		opt, _ := strconv.Atoi(op.OperationType)
-		esf, _ := strconv.Atoi(op.EscStepFrom)
-		est, _ := strconv.Atoi(op.EscStepTo)
-		opMap := map[string]interface{}{
-			"operationtype": opt,
-			"esc_period":    op.EscPeriod,
-			"esc_step_from": esf,
-			"esc_step_to":   est,
-		}
-
-		if op.OpMessage != nil {
-			opMap["mediatypeid"] = op.OpMessage.MediaTypeID
-			opMap["default_msg"] = op.OpMessage.DefaultMsg == "1"
-			opMap["subject"] = op.OpMessage.Subject
-			opMap["message"] = op.OpMessage.Message
-		}
-
-		if len(op.OpMessageGrp) > 0 {
-			var grpIds []string
-			for _, g := range op.OpMessageGrp {
-				grpIds = append(grpIds, g.Usrgrpid)
-			}
-			opMap["user_groups"] = grpIds
-		}
-
-		ops[i] = opMap
+	if err := setFields(d, values); err != nil {
+		return diag.FromErr(err)
 	}
-	d.Set("operation", ops)
-
 	return nil
 }
 
@@ -214,105 +354,21 @@ func resourceActionUpdate(ctx context.Context, d *schema.ResourceData, m interfa
 
 	action := expandAction(d)
 	action.ActionID = d.Id()
-
-	if err := client.UpdateAction(action); err != nil {
-		return diag.FromErr(err)
+	if err := client.UpdateAction(ctx, action); err != nil {
+		return diag.Errorf("updating action %s: %s", d.Id(), err)
 	}
-
 	return resourceActionRead(ctx, d, m)
 }
 
 func resourceActionDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
-	id := d.Id()
 
-	if err := client.DeleteAction(id); err != nil {
-		return diag.FromErr(err)
+	err := deleteError(ctx, client.DeleteAction(ctx, d.Id()), func(ctx context.Context) error {
+		_, err := client.GetAction(ctx, d.Id())
+		return err
+	})
+	if err != nil {
+		return diag.Errorf("deleting action %s: %s", d.Id(), err)
 	}
-
-	d.SetId("")
 	return nil
-}
-
-func expandAction(d *schema.ResourceData) *Action {
-	status := "0"
-	if !d.Get("enabled").(bool) {
-		status = "1"
-	}
-
-	action := &Action{
-		Name:        d.Get("name").(string),
-		EventSource: strconv.Itoa(d.Get("eventsource").(int)),
-		Status:      status,
-		EscPeriod:   d.Get("esc_period").(string),
-		Filter: ActionFilter{
-			EvalType: strconv.Itoa(d.Get("evaltype").(int)),
-		},
-	}
-
-	// Expand conditions
-	if rawConds, ok := d.GetOk("condition"); ok {
-		action.Filter.Conditions = expandActionConditions(rawConds.([]interface{}))
-	}
-
-	// Expand operations
-	if rawOps, ok := d.GetOk("operation"); ok {
-		action.Operations = expandActionOperations(rawOps.([]interface{}))
-	}
-
-	return action
-}
-
-func expandActionConditions(rawList []interface{}) []ActionCondition {
-	conds := make([]ActionCondition, len(rawList))
-	for i, item := range rawList {
-		m := item.(map[string]interface{})
-		conds[i] = ActionCondition{
-			ConditionType: strconv.Itoa(m["conditiontype"].(int)),
-			Operator:      strconv.Itoa(m["operator"].(int)),
-			Value:         m["value"].(string),
-		}
-	}
-	return conds
-}
-
-func expandActionOperations(rawList []interface{}) []ActionOperation {
-	ops := make([]ActionOperation, len(rawList))
-	for i, item := range rawList {
-		m := item.(map[string]interface{})
-		op := ActionOperation{
-			OperationType: strconv.Itoa(m["operationtype"].(int)),
-			EscPeriod:     m["esc_period"].(string),
-			EscStepFrom:   strconv.Itoa(m["esc_step_from"].(int)),
-			EscStepTo:     strconv.Itoa(m["esc_step_to"].(int)),
-		}
-
-		// Configure message settings
-		defaultMsg := "1"
-		if !m["default_msg"].(bool) {
-			defaultMsg = "0"
-		}
-
-		op.OpMessage = &ActionOpMessage{
-			MediaTypeID: m["mediatypeid"].(string),
-			DefaultMsg:  defaultMsg,
-			Subject:     m["subject"].(string),
-			Message:     m["message"].(string),
-		}
-
-		// Configure user groups to alert
-		if grps, ok := m["user_groups"]; ok {
-			grpSet := grps.(*schema.Set)
-			var opGrps []ActionOpMessageGrp
-			for _, g := range grpSet.List() {
-				opGrps = append(opGrps, ActionOpMessageGrp{
-					Usrgrpid: g.(string),
-				})
-			}
-			op.OpMessageGrp = opGrps
-		}
-
-		ops[i] = op
-	}
-	return ops
 }

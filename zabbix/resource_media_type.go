@@ -2,84 +2,159 @@ package zabbix
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+)
+
+const (
+	mediaTypeEmail   = 0
+	mediaTypeScript  = 1
+	mediaTypeSMS     = 2
+	mediaTypeWebhook = 4
 )
 
 func resourceMediaType() *schema.Resource {
 	return &schema.Resource{
+		Description: "Manages a Zabbix media type (email, script, SMS or webhook). " +
+			"Only the attributes relevant for the selected `type` are sent to Zabbix.",
 		CreateContext: resourceMediaTypeCreate,
 		ReadContext:   resourceMediaTypeRead,
 		UpdateContext: resourceMediaTypeUpdate,
 		DeleteContext: resourceMediaTypeDelete,
+		Importer:      passthroughImporter(),
+		Timeouts:      defaultTimeouts(),
+		CustomizeDiff: resourceMediaTypeCustomizeDiff,
 		Schema: map[string]*schema.Schema{
 			"name": {
-				Type:        schema.TypeString,
-				Required:    true,
-				Description: "The name of the media type",
+				Type:         schema.TypeString,
+				Required:     true,
+				ValidateFunc: validation.StringIsNotWhiteSpace,
+				Description:  "Name of the media type. Must be unique in Zabbix.",
 			},
 			"type": {
-				Type:        schema.TypeInt,
-				Required:    true,
-				Description: "Media type: 0 - Email, 1 - Script, 2 - SMS, 4 - Webhook",
+				Type:         schema.TypeInt,
+				Required:     true,
+				ValidateFunc: validation.IntInSlice([]int{mediaTypeEmail, mediaTypeScript, mediaTypeSMS, mediaTypeWebhook}),
+				Description:  "Transport: 0 - Email, 1 - Script, 2 - SMS, 4 - Webhook.",
 			},
 			"enabled": {
 				Type:        schema.TypeBool,
 				Optional:    true,
 				Default:     true,
-				Description: "Whether the media type is enabled",
+				Description: "Whether the media type is enabled.",
 			},
+			// Email
 			"smtp_server": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "SMTP server address (required for Email type)",
+				Default:     "",
+				Description: "SMTP server address. Required for type 0 (Email).",
+			},
+			"smtp_port": {
+				Type:         schema.TypeInt,
+				Optional:     true,
+				Default:      25,
+				ValidateFunc: validation.IsPortNumber,
+				Description:  "SMTP server port (Email).",
 			},
 			"smtp_helo": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "SMTP HELO (required for Email type)",
+				Default:     "",
+				Description: "SMTP HELO. Required for type 0 (Email).",
 			},
 			"smtp_email": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "SMTP email (required for Email type)",
+				Default:     "",
+				Description: "Sender email address. Required for type 0 (Email).",
 			},
+			"smtp_security": {
+				Type:         schema.TypeInt,
+				Optional:     true,
+				Default:      0,
+				ValidateFunc: validation.IntInSlice([]int{0, 1, 2}),
+				Description:  "SMTP connection security: 0 - none, 1 - STARTTLS, 2 - SSL/TLS (Email).",
+			},
+			"smtp_verify_peer": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Verify the SMTP server certificate (Email).",
+			},
+			"smtp_verify_host": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Verify the SMTP server host name in the certificate (Email).",
+			},
+			"smtp_authentication": {
+				Type:         schema.TypeInt,
+				Optional:     true,
+				Default:      0,
+				ValidateFunc: validation.IntInSlice([]int{0, 1}),
+				Description:  "SMTP authentication: 0 - none, 1 - normal password (Email).",
+			},
+			"username": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Default:     "",
+				Description: "SMTP user name. Only sent when `smtp_authentication` is 1 (Email).",
+			},
+			"password": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Sensitive:   true,
+				Default:     "",
+				Description: "SMTP password. Only sent when `smtp_authentication` is 1 (Email). Stored in the Terraform state; protect the state accordingly.",
+			},
+			// Script
 			"exec_path": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "Script name (required for Script type)",
+				Default:     "",
+				Description: "Script name. Required for type 1 (Script).",
 			},
+			// SMS
 			"gsm_modem": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "GSM modem serial port (required for SMS type)",
+				Default:     "",
+				Description: "GSM modem serial device. Required for type 2 (SMS).",
 			},
+			// Webhook
 			"script": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "JavaScript code (required for Webhook type)",
+				Default:     "",
+				Description: "JavaScript webhook body. Required for type 4 (Webhook). Keep secrets in `parameter` values, not in the script.",
 			},
 			"timeout": {
 				Type:        schema.TypeString,
 				Optional:    true,
 				Default:     "30s",
-				Description: "Webhook execution timeout",
+				Description: "Webhook execution timeout, 1-60s (Webhook).",
 			},
 			"parameter": {
 				Type:        schema.TypeList,
 				Optional:    true,
-				Description: "List of parameters (for Webhooks)",
+				Description: "Webhook input parameters (type 4 only). Values are marked sensitive.",
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"name": {
-							Type:     schema.TypeString,
-							Required: true,
+							Type:        schema.TypeString,
+							Required:    true,
+							Description: "Parameter name.",
 						},
 						"value": {
-							Type:     schema.TypeString,
-							Required: true,
+							Type:        schema.TypeString,
+							Required:    true,
+							Sensitive:   true,
+							Description: "Parameter value (may contain macros).",
 						},
 					},
 				},
@@ -88,53 +163,158 @@ func resourceMediaType() *schema.Resource {
 	}
 }
 
+func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	require := func(field string) error {
+		if d.Get(field).(string) == "" {
+			return fmt.Errorf("%s is required for media type %d", field, d.Get("type").(int))
+		}
+		return nil
+	}
+	t := d.Get("type").(int)
+	if t != mediaTypeWebhook && len(d.Get("parameter").([]interface{})) > 0 {
+		return fmt.Errorf("parameter blocks are only supported for type 4 (Webhook)")
+	}
+	switch t {
+	case mediaTypeEmail:
+		for _, f := range []string{"smtp_server", "smtp_helo", "smtp_email"} {
+			if err := require(f); err != nil {
+				return err
+			}
+		}
+		if d.Get("smtp_authentication").(int) == 0 && (d.Get("username").(string) != "" || d.Get("password").(string) != "") {
+			return fmt.Errorf("username/password require smtp_authentication = 1")
+		}
+	case mediaTypeScript:
+		return require("exec_path")
+	case mediaTypeSMS:
+		return require("gsm_modem")
+	case mediaTypeWebhook:
+		if err := require("script"); err != nil {
+			return err
+		}
+		secs, err := parseZabbixDuration(d.Get("timeout").(string))
+		if err != nil {
+			return fmt.Errorf("timeout: %w", err)
+		}
+		if secs != -1 && (secs < 1 || secs > 60) {
+			return fmt.Errorf("timeout must be between 1s and 60s")
+		}
+	}
+	return nil
+}
+
+func expandMediaType(d *schema.ResourceData) *MediaType {
+	mt := &MediaType{
+		Name:               d.Get("name").(string),
+		Type:               strconv.Itoa(d.Get("type").(int)),
+		Status:             boolToStatus(d.Get("enabled").(bool)),
+		SMTPServer:         d.Get("smtp_server").(string),
+		SMTPPort:           strconv.Itoa(d.Get("smtp_port").(int)),
+		SMTPHelo:           d.Get("smtp_helo").(string),
+		SMTPEmail:          d.Get("smtp_email").(string),
+		SMTPSecurity:       strconv.Itoa(d.Get("smtp_security").(int)),
+		SMTPVerifyPeer:     boolToFlag(d.Get("smtp_verify_peer").(bool)),
+		SMTPVerifyHost:     boolToFlag(d.Get("smtp_verify_host").(bool)),
+		SMTPAuthentication: strconv.Itoa(d.Get("smtp_authentication").(int)),
+		Username:           d.Get("username").(string),
+		Passwd:             d.Get("password").(string),
+		ExecPath:           d.Get("exec_path").(string),
+		GSMModem:           d.Get("gsm_modem").(string),
+		Script:             d.Get("script").(string),
+		Timeout:            d.Get("timeout").(string),
+		Parameters:         []MediaTypeParam{},
+	}
+	for _, item := range d.Get("parameter").([]interface{}) {
+		p := item.(map[string]interface{})
+		mt.Parameters = append(mt.Parameters, MediaTypeParam{Name: p["name"].(string), Value: p["value"].(string)})
+	}
+	return mt
+}
+
 func resourceMediaTypeCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
-	mt := expandMediaType(d)
-	mediaTypeID, err := client.CreateMediaType(mt)
+	id, err := client.CreateMediaType(ctx, expandMediaType(d))
 	if err != nil {
-		return diag.FromErr(err)
+		return diag.Errorf("creating media type: %s", err)
 	}
-
-	d.SetId(mediaTypeID)
+	d.SetId(id)
 	return resourceMediaTypeRead(ctx, d, m)
 }
 
 func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
-	id := d.Id()
 
-	mt, err := client.GetMediaType(id)
+	mt, err := client.GetMediaType(ctx, d.Id())
 	if err != nil {
-		d.SetId("")
-		return nil
+		return readError(ctx, d, "media type", err)
 	}
 
-	d.Set("name", mt.Name)
-	t, _ := strconv.Atoi(mt.Type)
-	d.Set("type", t)
-	d.Set("enabled", mt.Status == "0")
-	d.Set("smtp_server", mt.SMTPServer)
-	d.Set("smtp_helo", mt.SMTPHelo)
-	d.Set("smtp_email", mt.SMTPEmail)
-	d.Set("exec_path", mt.ExecPath)
-	d.Set("gsm_modem", mt.GSMModem)
-	d.Set("script", mt.Script)
-	d.Set("timeout", mt.Timeout)
-
-	// Read parameters
-	if len(mt.Parameters) > 0 {
-		params := make([]map[string]interface{}, len(mt.Parameters))
-		for i, p := range mt.Parameters {
-			params[i] = map[string]interface{}{
-				"name":  p.Name,
-				"value": p.Value,
-			}
+	ints := map[string]int{}
+	for field, raw := range map[string]string{
+		"type": mt.Type, "smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication,
+	} {
+		n, err := atoi(field, raw)
+		if err != nil {
+			return diag.FromErr(err)
 		}
-		d.Set("parameter", params)
+		ints[field] = n
 	}
 
+	params := make([]map[string]interface{}, len(mt.Parameters))
+	for i, p := range mt.Parameters {
+		params[i] = map[string]interface{}{"name": p.Name, "value": p.Value}
+	}
+
+	// Only attributes relevant for the type are taken from the API; the rest are
+	// reset to their schema defaults so that stale values left in Zabbix after a
+	// type change do not produce a permanent diff.
+	values := map[string]interface{}{
+		"name":                mt.Name,
+		"type":                ints["type"],
+		"enabled":             mt.Status == "0",
+		"smtp_server":         "",
+		"smtp_port":           25,
+		"smtp_helo":           "",
+		"smtp_email":          "",
+		"smtp_security":       0,
+		"smtp_verify_peer":    false,
+		"smtp_verify_host":    false,
+		"smtp_authentication": 0,
+		"username":            "",
+		"password":            "",
+		"exec_path":           "",
+		"gsm_modem":           "",
+		"script":              "",
+		"timeout":             "30s",
+		"parameter":           []map[string]interface{}{},
+	}
+	switch ints["type"] {
+	case mediaTypeEmail:
+		values["smtp_server"] = mt.SMTPServer
+		values["smtp_port"] = ints["smtp_port"]
+		values["smtp_helo"] = mt.SMTPHelo
+		values["smtp_email"] = mt.SMTPEmail
+		values["smtp_security"] = ints["smtp_security"]
+		values["smtp_verify_peer"] = mt.SMTPVerifyPeer == "1"
+		values["smtp_verify_host"] = mt.SMTPVerifyHost == "1"
+		values["smtp_authentication"] = ints["smtp_authentication"]
+		if ints["smtp_authentication"] == 1 {
+			values["username"] = mt.Username
+			values["password"] = mt.Passwd
+		}
+	case mediaTypeScript:
+		values["exec_path"] = mt.ExecPath
+	case mediaTypeSMS:
+		values["gsm_modem"] = mt.GSMModem
+	case mediaTypeWebhook:
+		values["script"] = mt.Script
+		values["timeout"] = mt.Timeout
+		values["parameter"] = params
+	}
+	if err := setFields(d, values); err != nil {
+		return diag.FromErr(err)
+	}
 	return nil
 }
 
@@ -143,57 +323,21 @@ func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m inte
 
 	mt := expandMediaType(d)
 	mt.MediaTypeID = d.Id()
-
-	if err := client.UpdateMediaType(mt); err != nil {
-		return diag.FromErr(err)
+	if err := client.UpdateMediaType(ctx, mt); err != nil {
+		return diag.Errorf("updating media type %s: %s", d.Id(), err)
 	}
-
 	return resourceMediaTypeRead(ctx, d, m)
 }
 
 func resourceMediaTypeDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
-	id := d.Id()
 
-	if err := client.DeleteMediaType(id); err != nil {
-		return diag.FromErr(err)
+	err := deleteError(ctx, client.DeleteMediaType(ctx, d.Id()), func(ctx context.Context) error {
+		_, err := client.GetMediaType(ctx, d.Id())
+		return err
+	})
+	if err != nil {
+		return diag.Errorf("deleting media type %s: %s", d.Id(), err)
 	}
-
-	d.SetId("")
 	return nil
-}
-
-func expandMediaType(d *schema.ResourceData) *MediaType {
-	status := "0" // Enabled
-	if !d.Get("enabled").(bool) {
-		status = "1" // Disabled
-	}
-
-	mt := &MediaType{
-		Name:        d.Get("name").(string),
-		Type:        strconv.Itoa(d.Get("type").(int)),
-		Status:      status,
-		SMTPServer:  d.Get("smtp_server").(string),
-		SMTPHelo:    d.Get("smtp_helo").(string),
-		SMTPEmail:   d.Get("smtp_email").(string),
-		ExecPath:    d.Get("exec_path").(string),
-		GSMModem:    d.Get("gsm_modem").(string),
-		Script:      d.Get("script").(string),
-		Timeout:     d.Get("timeout").(string),
-	}
-
-	if rawParams, ok := d.GetOk("parameter"); ok {
-		rawList := rawParams.([]interface{})
-		params := make([]MediaTypeParam, len(rawList))
-		for i, item := range rawList {
-			m := item.(map[string]interface{})
-			params[i] = MediaTypeParam{
-				Name:  m["name"].(string),
-				Value: m["value"].(string),
-			}
-		}
-		mt.Parameters = params
-	}
-
-	return mt
 }
