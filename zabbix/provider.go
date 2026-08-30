@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
@@ -91,18 +92,18 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	if cfg.APIToken != "" && cfg.Username != "" {
 		// Both methods resolved (typically one of them from globally exported
 		// ZABBIX_* variables in CI): the explicitly configured one wins; two
-		// explicit methods are a hard error.
-		tokenFromEnv := os.Getenv("ZABBIX_API_TOKEN") == cfg.APIToken
-		credsFromEnv := os.Getenv("ZABBIX_USERNAME") == cfg.Username
+		// explicit methods (or two ambient ones) are a hard error.
+		tokenExplicit := attrWrittenInConfig(d, "api_token", "ZABBIX_API_TOKEN")
+		credsExplicit := attrWrittenInConfig(d, "username", "ZABBIX_USERNAME")
 		switch {
-		case credsFromEnv && !tokenFromEnv:
+		case tokenExplicit && !credsExplicit:
 			diags = append(diags, diag.Diagnostic{
 				Severity: diag.Warning,
 				Summary:  "Ignoring ZABBIX_USERNAME/ZABBIX_PASSWORD",
 				Detail:   "api_token is configured; the username/password from the environment are not used.",
 			})
 			cfg.Username, cfg.Password = "", ""
-		case tokenFromEnv && !credsFromEnv:
+		case credsExplicit && !tokenExplicit:
 			diags = append(diags, diag.Diagnostic{
 				Severity: diag.Warning,
 				Summary:  "Ignoring ZABBIX_API_TOKEN",
@@ -149,23 +150,43 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	ctx, cancel := context.WithTimeout(ctx, configureTimeout)
 	defer cancel()
 
+	// Errors below are appended to the collected warnings so that the operator
+	// still sees e.g. the plain-HTTP warning when configure fails.
 	version, err := client.GetVersion(ctx)
 	if err != nil {
-		return nil, diag.Errorf("failed to retrieve Zabbix API version from %s: %s", cfg.URL, err)
+		return nil, append(diags, diag.Errorf("failed to retrieve Zabbix API version from %s: %s", cfg.URL, err)...)
 	}
-	diags = append(diags, versionWarning(version)...)
+	diags = append(diags, versionDiagnostics(version)...)
+	if diags.HasError() {
+		return nil, diags
+	}
 
 	if err := client.Login(ctx); err != nil {
-		return nil, diag.Errorf("failed to authenticate with Zabbix API: %s", err)
+		return nil, append(diags, diag.Errorf("failed to authenticate with Zabbix API: %s", err)...)
 	}
 	if cfg.APIToken != "" {
 		// Sessions are validated by Login; tokens only by an authenticated call.
 		if err := client.CheckAuth(ctx); err != nil {
-			return nil, diag.Errorf("api_token was rejected by the Zabbix API: %s", err)
+			return nil, append(diags, diag.Errorf("api_token was rejected by the Zabbix API: %s", err)...)
 		}
 	}
 
 	return client, diags
+}
+
+// attrWrittenInConfig reports whether the attribute was written in the
+// configuration, as opposed to injected by its environment DefaultFunc. The
+// raw config is authoritative; when the SDK cannot provide it (schema test
+// harness) the value is compared with the environment as a heuristic.
+func attrWrittenInConfig(d *schema.ResourceData, attr, envVar string) bool {
+	if raw := d.GetRawConfig(); !raw.IsNull() {
+		return writtenInRaw(raw, attr)
+	}
+	return os.Getenv(envVar) != d.Get(attr).(string)
+}
+
+func writtenInRaw(raw cty.Value, attr string) bool {
+	return !raw.GetAttr(attr).IsNull()
 }
 
 func isLoopback(host string) bool {
@@ -189,9 +210,15 @@ func plainHTTPWarning(rawURL string) diag.Diagnostics {
 	}}
 }
 
-// versionWarning warns when the server is not the tested Zabbix version line.
-func versionWarning(version string) diag.Diagnostics {
+// versionDiagnostics validates the reported server version. 6.4.0 is rejected:
+// the token parameter of user.checkAuthentication, which api_token validation
+// relies on, only exists since 6.4.1 (ZBXNEXT-8012). Other version lines are
+// untested and produce a warning.
+func versionDiagnostics(version string) diag.Diagnostics {
 	if strings.HasPrefix(version, SupportedVersionPrefix+".") {
+		if patch, err := strconv.Atoi(strings.TrimPrefix(version, SupportedVersionPrefix+".")); err == nil && patch < 1 {
+			return diag.Errorf("Zabbix %s is not supported: user.checkAuthentication cannot validate API tokens before %s.1 (ZBXNEXT-8012); upgrade the server", version, SupportedVersionPrefix)
+		}
 		return nil
 	}
 	return diag.Diagnostics{{

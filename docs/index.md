@@ -7,7 +7,11 @@ description: |-
 
 # zabbix Provider
 
-Manages Zabbix objects through the JSON-RPC API. Tested against Zabbix 6.4.
+Manages Zabbix objects through the JSON-RPC API. Tested against Zabbix 6.4;
+6.4.0 is rejected at configure time (it cannot validate API tokens) and other
+version lines produce an "untested" warning. Every CRUD operation defaults to
+a 2-minute timeout; raise it per resource with a `timeouts` block
+(e.g. `timeouts { create = "15m" }`).
 
 Authenticate with an API token (`api_token`, recommended) or with `username` and
 `password` - the two methods are mutually exclusive. `tls_insecure` and
@@ -19,8 +23,9 @@ state.
 ~> Zabbix returns an empty result both for objects that do not exist and for
 objects the authenticated user cannot see. If the credentials lose access to a
 managed object, the provider treats it as deleted: the resource is removed from
-state (with a warning) and would be recreated on the next apply. Use
-credentials whose permissions cover everything under management.
+state (with a warning) and would be recreated on the next apply; `terraform
+destroy` likewise treats such an object as already deleted. Use credentials
+whose permissions cover everything under management.
 
 ## Example Usage
 

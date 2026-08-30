@@ -42,7 +42,7 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
       - name: No payload or secret logging in provider code
         run: |
-          if grep -rnE 'os\.Stderr|os\.Stdout|fmt\.Fprint|fmt\.Print|\blog\.' --include='*.go' --exclude='*_test.go' zabbix/ main.go; then
+          if grep -rnE 'os\.Stderr|os\.Stdout|fmt\.Fprint|fmt\.Print|\blog\.|\bprint\(|\bprintln\(' --include='*.go' --exclude='*_test.go' zabbix/ main.go; then
             echo "::error::provider code must not write to stdout/stderr or the standard logger (use tflog without payloads)"; exit 1
           fi
       - name: go mod tidy check

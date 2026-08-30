@@ -279,6 +279,13 @@ resource "zabbix_media_type" "wh" {
 %s}`, n, params)
 	}
 	twoParams := `
+  max_attempts     = 5
+  attempt_interval = "30s"
+  process_tags     = true
+  show_event_menu  = true
+  event_menu_url   = "https://example.test/{EVENT.ID}"
+  event_menu_name  = "Details"
+
   parameter {
     name  = "url"
     value = "https://hooks.example.test/x"
@@ -301,7 +308,13 @@ resource "zabbix_media_type" "wh" {
 			}},
 			// Rename without parameters used to fail with "parameters: an array is expected".
 			{Config: cfg(name+"-renamed", ""), Check: resource.TestCheckResourceAttr("zabbix_media_type.wh", "name", name+"-renamed")},
-			{Config: cfg(name, twoParams), Check: resource.TestCheckResourceAttr("zabbix_media_type.wh", "parameter.#", "2")},
+			{Config: cfg(name, twoParams), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "parameter.#", "2"),
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "max_attempts", "5"),
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "process_tags", "true"),
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "show_event_menu", "true"),
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "event_menu_name", "Details"),
+			)},
 			{
 				// Parameters removed outside Terraform must be detected and restored.
 				PreConfig: func() {
@@ -343,6 +356,9 @@ resource "zabbix_media_type" "mail" {
   smtp_authentication = 1
   username            = "zabbix"
   password            = "hunter2"
+  content_type        = 0
+  description         = "managed by terraform"
+  max_attempts        = 5
 }`, name)
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
@@ -353,6 +369,8 @@ resource "zabbix_media_type" "mail" {
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "enabled", "false"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_port", "587"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "password", "hunter2"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "content_type", "0"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "max_attempts", "5"),
 			)},
 			{ResourceName: "zabbix_media_type.mail", ImportState: true, ImportStateVerify: true},
 		},

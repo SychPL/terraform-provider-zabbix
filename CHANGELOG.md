@@ -17,6 +17,17 @@
 - `zabbix_media_type`: attributes not relevant for the selected `type` are
   rejected at plan time (e.g. `parameter` blocks on an email media type).
 
+### Added
+
+- `zabbix_media_type`: full Zabbix 6.4 object model - `description`,
+  `max_sessions`, `max_attempts`, `attempt_interval`, `content_type` (email),
+  `process_tags`, `show_event_menu`, `event_menu_url`, `event_menu_name`
+  (webhook). Changing them outside Terraform now shows up as drift.
+- The provider rejects Zabbix 6.4.0 at configure time with a clear diagnostic
+  (`user.checkAuthentication` cannot validate API tokens before 6.4.1).
+- Configure warnings (plain HTTP, disabled TLS verification, ignored ambient
+  credentials) are reported even when configure fails.
+
 ### Fixed
 
 - Read no longer removes a resource from state on transport errors, timeouts

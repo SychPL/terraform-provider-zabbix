@@ -10,6 +10,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
+// defaultAgentPort is the schema default for "port"; CustomizeDiff and Read
+// reference it so the three places cannot drift apart.
+const defaultAgentPort = "10050"
+
 func resourceHost() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix host with a single main agent interface. " +
@@ -82,7 +86,7 @@ func resourceHost() *schema.Resource {
 			"port": {
 				Type:         schema.TypeString,
 				Optional:     true,
-				Default:      "10050",
+				Default:      defaultAgentPort,
 				ValidateFunc: validatePort,
 				Description:  "Port of the main agent interface (number or user macro).",
 			},
@@ -112,7 +116,7 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 		if !d.Get("use_ip").(bool) {
 			return fmt.Errorf("dns is required when use_ip is false")
 		}
-		if planKnown(d, "port") && d.Get("port").(string) != "10050" {
+		if planKnown(d, "port") && d.Get("port").(string) != defaultAgentPort {
 			return fmt.Errorf("port requires ip or dns (the host has no agent interface)")
 		}
 		return nil
@@ -199,7 +203,7 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 		values["use_ip"] = true
 		values["ip"] = ""
 		values["dns"] = ""
-		values["port"] = "10050"
+		values["port"] = defaultAgentPort
 	}
 	if err := setFields(d, values); err != nil {
 		return diag.FromErr(err)

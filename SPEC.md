@@ -118,6 +118,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | M10 | P3 | `timeout` webhooka: tylko 1-60s, makra odrzucane (API ich nie przyjmuje) | `TestMediaTypeCustomizeDiff` | DONE |
 | M12 | P1 | Zmiana typu na Script wysyla `parameters: []` (inaczej parametry webhooka zostawaly i Read odmawial zarzadzania) | `TestMediaTypeParams_ScriptParametersUntouched`, kroki webhook->script w `TestAccMediaType_scriptSmsTypeChange` | DONE |
 | M11 | P3 | Read: najpierw walidacja `type` (nieobslugiwany = odmowa z hintem), potem parsowanie WYLACZNIE pol wlasciwych dla typu; puste wartosci pol obcych tolerowane (obiekty spoza providera), nieparsowalne pole wlasnego typu = odmowa z hintem `terraform state rm` | `TestMediaTypeRead_RefusesUnsupportedType`, `TestMediaTypeRead_ForeignNumericFieldsAreTolerated`, `TestMediaTypeRead_OwnNonNumericFieldRefusedWithHint` | DONE |
+| M13 | P2 | Pelny model media type 6.4 (Codex, r12): `description`, `max_sessions` (SMS wymusza 1), `max_attempts`, `attempt_interval` (0-1h, walidacja w planie), `content_type` (Email), `process_tags`, `show_event_menu` + `event_menu_url`/`event_menu_name` (Webhook, wymagane razem); Read resetuje pola obcych typow do defaultow SCHEMATU (jedno zrodlo, GLM r12) | `TestMediaTypeCustomizeDiff`, `TestMediaTypeRead_TypeAwareReset`, `TestMediaTypeParams_TypeAware`, `TestAccMediaType_webhook`, `TestAccMediaType_email` | DONE |
 
 ### 3.5 `zabbix_action`
 
@@ -144,6 +145,8 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 |---|---|---|---|---|
 | P1 | P2 | Walidacja URL (http/https); warning przy `http://` poza loopback; warning przy wersji innej niz 6.4.x | `TestProviderConfigure_AuthValidation`, `TestProviderConfigure_WarnsOnPlainHTTPAndVersion` | DONE |
 | P2 | P3 | `version` z ldflags -> `User-Agent` | `main.go`, `rawCall` | DONE |
+| P4 | P2 | Minimalna wersja: 6.4.0 odrzucane w configure (brak `token` w `user.checkAuthentication` przed 6.4.1, ZBXNEXT-8012); inne linie = warning | `TestProviderConfigure_RejectsZabbix640`, `TestPlainHTTPWarning` | DONE |
+| P5 | P3 | Zrodlo credentiali (HCL vs env) rozstrzygane po `GetRawConfig` (fallback: porownanie z env w harnessie testowym), nie po rownosci wartosci; warningi towarzysza bledom configure (operator widzi np. warning o plain HTTP takze gdy configure pada); sciezki bledow configure (apiinfo.version, user.login) pokryte testami | `TestWrittenInRaw`, `TestProviderConfigure_ConfigureErrorPaths`, przypadek "remote http warns" w `TestProviderConfigure_AuthValidation` | DONE |
 
 Decyzja: HTTPS NIE jest wymuszane (Codex proponowal opt-in). Warning wystarcza;
 twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
@@ -191,6 +194,10 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 - `hostinterface.update` i `host.update templates_clear` dzialaja zgodnie z docs.
 - Nieistniejacy obiekt w delete: `-32500 No permissions to referred object or it does not exist!`
 - Zly/wygasly token: `-32602 Session terminated, re-login, please.` (nieodroznialne).
+- `user.checkAuthentication` przyjmuje parametr `token` dopiero od 6.4.1 (ZBXNEXT-8012);
+  provider odrzuca 6.4.0 w configure z jasna diagnostyka (Codex, r12).
+- ZBX-22952: proxy/webserver gubiacy naglowek `Authorization` daje "Not authorized" przy CRUD
+  mimo poprawnego configure (provider uzywa wylacznie Bearer) - udokumentowane w README.
 
 ## 4a. Uwagi recenzentow odrzucone (z uzasadnieniem)
 
@@ -201,6 +208,11 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   swiadomy wybor, lokalne laby i test acceptance chodza po http.
 - (GLM, r7) "Wspoldzielona mapa schematu media type": jedna instancja providera na proces,
   SDK nie mutuje schematu po InternalValidate; przebudowa per wywolanie bez zysku.
+- (Codex, r12) "Destroy przy utracie uprawnien konczy sie pozornym sukcesem": API Zabbix
+  zwraca ten sam blad dla brakujacego obiektu i braku uprawnien, a Get pusty wynik
+  (fakty w sekcji 4) - rozroznienie jest niemozliwe. Konwencja providerow Terraform:
+  potwierdzona niewidocznosc = usuniete. Udokumentowane w docs/index i README
+  ("The same applies to terraform destroy").
 - (GLM, r10) "Import ID szablonu jako hosta uszkadza szablon": obalone empirycznie -
   `host.get` z ID szablonu zwraca pusta liste na 6.4.21 (szablony nie sa hostami w API);
   dodatkowo Read odmawia hostow z LLD (`flags != 0`).

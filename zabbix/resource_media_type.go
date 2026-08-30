@@ -58,7 +58,40 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Default:     true,
 			Description: "Whether the media type is enabled.",
 		},
+		"description": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "Description of the media type.",
+		},
+		"max_sessions": {
+			Type:         schema.TypeInt,
+			Optional:     true,
+			Default:      1,
+			ValidateFunc: validation.IntBetween(0, 100),
+			Description:  "Maximum number of alerts processed in parallel: 0 (unlimited) to 100. SMS media types only support 1.",
+		},
+		"max_attempts": {
+			Type:         schema.TypeInt,
+			Optional:     true,
+			Default:      3,
+			ValidateFunc: validation.IntBetween(1, 100),
+			Description:  "Maximum number of delivery attempts (1-100).",
+		},
+		"attempt_interval": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "10s",
+			Description: "Interval between delivery attempts, 0-1h (e.g. `10s`, `1m`).",
+		},
 		// Email
+		"content_type": {
+			Type:         schema.TypeInt,
+			Optional:     true,
+			Default:      1,
+			ValidateFunc: validation.IntInSlice([]int{0, 1}),
+			Description:  "Message format: 0 - plain text, 1 - HTML (Email).",
+		},
 		"smtp_server": {
 			Type:        schema.TypeString,
 			Optional:    true,
@@ -150,6 +183,30 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Default:     "30s",
 			Description: "Webhook execution timeout, 1-60s (Webhook).",
 		},
+		"process_tags": {
+			Type:        schema.TypeBool,
+			Optional:    true,
+			Default:     false,
+			Description: "Process the webhook script response as event tags (Webhook).",
+		},
+		"show_event_menu": {
+			Type:        schema.TypeBool,
+			Optional:    true,
+			Default:     false,
+			Description: "Add an entry to the event menu (Webhook). Requires `event_menu_url` and `event_menu_name`.",
+		},
+		"event_menu_url": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "URL of the event menu entry, supports `{EVENT.TAGS.*}` macros (Webhook).",
+		},
+		"event_menu_name": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "Name of the event menu entry (Webhook).",
+		},
 		"parameter": {
 			Type:        schema.TypeList,
 			Optional:    true,
@@ -175,10 +232,10 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 
 // mediaTypeFields lists the attributes that belong to each media type type.
 var mediaTypeFields = map[int][]string{
-	mediaTypeEmail:   {"smtp_server", "smtp_port", "smtp_helo", "smtp_email", "smtp_security", "smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "password"},
+	mediaTypeEmail:   {"smtp_server", "smtp_port", "smtp_helo", "smtp_email", "smtp_security", "smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "password", "content_type"},
 	mediaTypeScript:  {"exec_path"},
 	mediaTypeSMS:     {"gsm_modem"},
-	mediaTypeWebhook: {"script", "timeout", "parameter"},
+	mediaTypeWebhook: {"script", "timeout", "parameter", "process_tags", "show_event_menu", "event_menu_url", "event_menu_name"},
 }
 
 func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
@@ -221,6 +278,15 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 		}
 	}
 
+	if known("attempt_interval") {
+		if secs, err := parseZabbixDuration(d.Get("attempt_interval").(string)); err != nil || secs < 0 || secs > 3600 {
+			return fmt.Errorf("attempt_interval must be a duration between 0 and 1h (e.g. 10s, 1m), got %q", d.Get("attempt_interval"))
+		}
+	}
+	if t == mediaTypeSMS && known("max_sessions") && d.Get("max_sessions").(int) != 1 {
+		return fmt.Errorf("max_sessions must be 1 for SMS media types")
+	}
+
 	require := func(field string) error {
 		if known(field) && d.Get(field).(string) == "" {
 			return fmt.Errorf("%s is required for media type %d", field, t)
@@ -256,6 +322,20 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 		if err := require("script"); err != nil {
 			return err
 		}
+		switch {
+		case known("show_event_menu") && d.Get("show_event_menu").(bool):
+			for _, f := range []string{"event_menu_url", "event_menu_name"} {
+				if err := require(f); err != nil {
+					return err
+				}
+			}
+		case known("show_event_menu"):
+			for _, f := range []string{"event_menu_url", "event_menu_name"} {
+				if known(f) && d.Get(f).(string) != "" {
+					return fmt.Errorf("%s requires show_event_menu = true", f)
+				}
+			}
+		}
 		if known("timeout") {
 			secs, err := parseZabbixDuration(d.Get("timeout").(string))
 			if err != nil {
@@ -288,6 +368,15 @@ func expandMediaType(d *schema.ResourceData) *MediaType {
 		GSMModem:           d.Get("gsm_modem").(string),
 		Script:             d.Get("script").(string),
 		Timeout:            d.Get("timeout").(string),
+		Description:        d.Get("description").(string),
+		MaxSessions:        strconv.Itoa(d.Get("max_sessions").(int)),
+		MaxAttempts:        strconv.Itoa(d.Get("max_attempts").(int)),
+		AttemptInterval:    d.Get("attempt_interval").(string),
+		ContentType:        strconv.Itoa(d.Get("content_type").(int)),
+		ProcessTags:        boolToFlag(d.Get("process_tags").(bool)),
+		ShowEventMenu:      boolToFlag(d.Get("show_event_menu").(bool)),
+		EventMenuURL:       d.Get("event_menu_url").(string),
+		EventMenuName:      d.Get("event_menu_name").(string),
 		Parameters:         []MediaTypeParam{},
 	}
 	for _, item := range d.Get("parameter").([]interface{}) {
@@ -329,10 +418,25 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	if mtType == mediaTypeScript && len(mt.Parameters) > 0 {
 		return diag.Errorf("media type %s is a script media type with parameters, which this provider does not support; %s", d.Id(), unmanageableHint)
 	}
-	ints := map[string]int{"type": mtType, "smtp_port": 25, "smtp_security": 0, "smtp_authentication": 0}
+	// Numeric defaults come from the schema (single source); empty API values
+	// (objects created outside the provider) keep the default.
+	ints := map[string]int{"type": mtType}
+	for _, f := range []string{"smtp_port", "smtp_security", "smtp_authentication", "content_type", "max_sessions", "max_attempts"} {
+		ints[f] = mediaTypeSchema[f].Default.(int)
+	}
+	for field, raw := range map[string]string{"max_sessions": mt.MaxSessions, "max_attempts": mt.MaxAttempts} {
+		if raw == "" {
+			continue
+		}
+		n, err := atoi(field, raw)
+		if err != nil {
+			return diag.Errorf("media type %s: %s; %s", d.Id(), err, unmanageableHint)
+		}
+		ints[field] = n
+	}
 	if mtType == mediaTypeEmail {
 		for field, raw := range map[string]string{
-			"smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication,
+			"smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication, "content_type": mt.ContentType,
 		} {
 			if raw == "" {
 				continue // keep the schema default
@@ -349,29 +453,31 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 		params[i] = map[string]interface{}{"name": p.Name, "value": p.Value}
 	}
 
-	// Only attributes relevant for the type are taken from the API; the rest are
-	// reset to their schema defaults so that stale values left in Zabbix after a
-	// type change do not produce a permanent diff.
-	values := map[string]interface{}{
-		"name":                mt.Name,
-		"type":                ints["type"],
-		"enabled":             mt.Status == "0",
-		"smtp_server":         "",
-		"smtp_port":           25,
-		"smtp_helo":           "",
-		"smtp_email":          "",
-		"smtp_security":       0,
-		"smtp_verify_peer":    false,
-		"smtp_verify_host":    false,
-		"smtp_authentication": 0,
-		"username":            "",
-		"password":            "",
-		"exec_path":           "",
-		"gsm_modem":           "",
-		"script":              "",
-		"timeout":             "30s",
-		"parameter":           []map[string]interface{}{},
+	// Only attributes relevant for the type are taken from the API; the rest
+	// are reset to their schema defaults (the schema is the single source of
+	// those values) so that stale values left in Zabbix after a type change do
+	// not produce a permanent diff.
+	values := map[string]interface{}{}
+	for _, fields := range mediaTypeFields {
+		for _, f := range fields {
+			if f == "parameter" {
+				values[f] = []map[string]interface{}{}
+				continue
+			}
+			values[f] = mediaTypeSchema[f].Default
+		}
 	}
+	attemptInterval := mediaTypeSchema["attempt_interval"].Default.(string)
+	if mt.AttemptInterval != "" {
+		attemptInterval = mt.AttemptInterval
+	}
+	values["name"] = mt.Name
+	values["type"] = ints["type"]
+	values["enabled"] = mt.Status == "0"
+	values["description"] = mt.Description
+	values["max_sessions"] = ints["max_sessions"]
+	values["max_attempts"] = ints["max_attempts"]
+	values["attempt_interval"] = attemptInterval
 	switch ints["type"] {
 	case mediaTypeEmail:
 		values["smtp_server"] = mt.SMTPServer
@@ -382,6 +488,7 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 		values["smtp_verify_peer"] = mt.SMTPVerifyPeer == "1"
 		values["smtp_verify_host"] = mt.SMTPVerifyHost == "1"
 		values["smtp_authentication"] = ints["smtp_authentication"]
+		values["content_type"] = ints["content_type"]
 		if ints["smtp_authentication"] == 1 {
 			values["username"] = mt.Username
 			values["password"] = mt.Passwd
@@ -393,6 +500,10 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	case mediaTypeWebhook:
 		values["script"] = mt.Script
 		values["timeout"] = mt.Timeout
+		values["process_tags"] = mt.ProcessTags == "1"
+		values["show_event_menu"] = mt.ShowEventMenu == "1"
+		values["event_menu_url"] = mt.EventMenuURL
+		values["event_menu_name"] = mt.EventMenuName
 		values["parameter"] = params
 	}
 	if err := setFields(d, values); err != nil {

@@ -3,7 +3,14 @@ resource "zabbix_media_type" "slack" {
   name    = "Slack"
   type    = 4
   timeout = "10s"
-  script  = <<-EOT
+
+  max_attempts     = 5
+  attempt_interval = "30s"
+
+  show_event_menu = true
+  event_menu_url  = "https://slack.example.com/archives/{EVENT.TAGS.channel}"
+  event_menu_name = "Open Slack channel"
+  script          = <<-EOT
     var params = JSON.parse(value);
     var req = new HttpRequest();
     req.addHeader('Content-Type: application/json');
@@ -38,4 +45,5 @@ resource "zabbix_media_type" "email" {
   smtp_authentication = 1
   username            = "zabbix"
   password            = var.smtp_password
+  content_type        = 0
 }

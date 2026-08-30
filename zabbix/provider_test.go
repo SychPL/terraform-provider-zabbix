@@ -77,29 +77,39 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"query in url", map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php?sid=s3cret-pw", "api_token": "t"}, "query string", ""},
 		{"tls_insecure with ca_cert_file", map[string]interface{}{"url": s.URL, "api_token": "t", "tls_insecure": true, "ca_cert_file": "ca.pem"}, "mutually exclusive", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
+		// The plain-HTTP warning must come from providerConfigure itself and
+		// must survive a failing configure (DNS error on the .invalid TLD).
+		{"remote http warns", map[string]interface{}{"url": "http://zabbix.invalid/api_jsonrpc.php", "api_token": "t"}, "failed to retrieve Zabbix API version", "plain HTTP"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := schema.TestResourceDataRaw(t, Provider().Schema, tc.raw)
 			_, diags := providerConfigure(context.Background(), d)
-			if tc.wantErr != "" {
-				if !diags.HasError() || !strings.Contains(diags[0].Summary, tc.wantErr) {
-					t.Fatalf("want error containing %q, got %v", tc.wantErr, diags)
+			var errs, warnings []string
+			for _, dg := range diags {
+				if strings.Contains(dg.Summary+dg.Detail, "s3cret-pw") {
+					t.Fatalf("credentials from the URL must never appear in diagnostics: %v", dg)
 				}
-				for _, dg := range diags {
-					if strings.Contains(dg.Summary+dg.Detail, "s3cret-pw") {
-						t.Fatalf("credentials from the URL must never appear in diagnostics: %v", dg)
-					}
+				if dg.Severity == diag.Error {
+					errs = append(errs, dg.Summary)
+				} else {
+					warnings = append(warnings, dg.Summary)
+				}
+			}
+			if tc.wantWrn != "" && !containsSubstring(warnings, tc.wantWrn) {
+				t.Errorf("want warning containing %q, got %v", tc.wantWrn, warnings)
+			}
+			if tc.wantWrn == "" && len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if tc.wantErr != "" {
+				if !containsSubstring(errs, tc.wantErr) {
+					t.Fatalf("want error containing %q, got %v", tc.wantErr, diags)
 				}
 				return
 			}
 			if diags.HasError() {
 				t.Fatalf("unexpected error: %v", diags)
-			}
-			for _, dg := range diags {
-				if tc.wantWrn == "" {
-					t.Errorf("unexpected warning: %s", dg.Summary)
-				}
 			}
 		})
 	}
@@ -216,11 +226,17 @@ func TestPlainHTTPWarning(t *testing.T) {
 			t.Errorf("%s must not warn, got %v", u, w)
 		}
 	}
-	if w := versionWarning("6.4.21"); len(w) != 0 {
+	if w := versionDiagnostics("6.4.21"); len(w) != 0 {
 		t.Errorf("6.4.x must not warn, got %v", w)
 	}
-	if w := versionWarning("6.0.30"); len(w) != 1 {
-		t.Errorf("6.0.x must warn")
+	if w := versionDiagnostics("6.4.1"); len(w) != 0 {
+		t.Errorf("6.4.1 is the minimum supported version, got %v", w)
+	}
+	if w := versionDiagnostics("6.0.30"); len(w) != 1 || w.HasError() {
+		t.Errorf("6.0.x must warn, not error, got %v", w)
+	}
+	if w := versionDiagnostics("6.4.0"); !w.HasError() {
+		t.Errorf("6.4.0 must be rejected, got %v", w)
 	}
 }
 
@@ -264,6 +280,76 @@ func TestEnvBoolDefault(t *testing.T) {
 func resourceValidate(t *testing.T, raw map[string]interface{}) diag.Diagnostics {
 	t.Helper()
 	return Provider().Validate(terraform.NewResourceConfigRaw(raw))
+}
+
+func containsSubstring(list []string, sub string) bool {
+	for _, s := range list {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func diagContains(diags diag.Diagnostics, sev diag.Severity, sub string) bool {
+	for _, dg := range diags {
+		if dg.Severity == sev && strings.Contains(dg.Summary+dg.Detail, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestProviderConfigure_ConfigureErrorPaths(t *testing.T) {
+	clearProviderEnv(t)
+	versionDown := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: "database down"}
+	})
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": versionDown.URL, "api_token": "t", "tls_insecure": true})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "failed to retrieve Zabbix API version") {
+		t.Fatalf("apiinfo.version failure must fail configure, got %v", diags)
+	}
+	if !diagContains(diags, diag.Warning, "TLS certificate verification is disabled") {
+		t.Fatalf("warnings must accompany the error, got %v", diags)
+	}
+
+	badLogin := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method == "apiinfo.version" {
+			return "6.4.21", nil
+		}
+		return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: "Incorrect user name or password or account is temporarily blocked."}
+	})
+	d = schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": badLogin.URL, "username": "u", "password": "wrong"})
+	_, diags = providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "failed to authenticate") {
+		t.Fatalf("user.login failure must fail configure, got %v", diags)
+	}
+}
+
+func TestProviderConfigure_RejectsZabbix640(t *testing.T) {
+	clearProviderEnv(t)
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method != "apiinfo.version" {
+			t.Errorf("no call beyond apiinfo.version expected on a rejected version, got %s", req.Method)
+		}
+		return "6.4.0", nil
+	})
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": s.URL, "api_token": "t"})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "not supported") {
+		t.Fatalf("6.4.0 must be rejected with a clear diagnostic, got %v", diags)
+	}
+}
+
+func TestWrittenInRaw(t *testing.T) {
+	raw := cty.ObjectVal(map[string]cty.Value{
+		"api_token": cty.StringVal("t"),
+		"username":  cty.NullVal(cty.String),
+	})
+	if !writtenInRaw(raw, "api_token") || writtenInRaw(raw, "username") {
+		t.Error("raw config must distinguish written attributes from env-injected defaults")
+	}
 }
 
 func contains(list []string, s string) bool {
@@ -444,6 +530,15 @@ func TestMediaTypeCustomizeDiff(t *testing.T) {
 		{"unsupported type", map[string]interface{}{"name": "m", "type": 3}, "expected type to be one of"},
 		{"email field on webhook", map[string]interface{}{"name": "m", "type": 4, "script": "x", "smtp_port": 587}, "smtp_port is not supported for media type 4"},
 		{"webhook field on script", map[string]interface{}{"name": "m", "type": 1, "exec_path": "x", "timeout": "10s"}, "timeout is not supported for media type 1"},
+		{"content_type on webhook", map[string]interface{}{"name": "m", "type": 4, "script": "x", "content_type": 0}, "content_type is not supported for media type 4"},
+		{"process_tags on email", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "process_tags": true}, "process_tags is not supported for media type 0"},
+		{"email content_type ok", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "content_type": 0}, ""},
+		{"sms max_sessions", map[string]interface{}{"name": "m", "type": 2, "gsm_modem": "/dev/ttyS0", "max_sessions": 5}, "max_sessions must be 1"},
+		{"bad attempt_interval", map[string]interface{}{"name": "m", "type": 4, "script": "x", "attempt_interval": "2h"}, "attempt_interval must be"},
+		{"attempt_interval macro", map[string]interface{}{"name": "m", "type": 4, "script": "x", "attempt_interval": "{$IV}"}, "attempt_interval must be"},
+		{"event menu without url", map[string]interface{}{"name": "m", "type": 4, "script": "x", "show_event_menu": true}, "event_menu_url is required"},
+		{"event menu url without flag", map[string]interface{}{"name": "m", "type": 4, "script": "x", "event_menu_url": "https://x"}, "requires show_event_menu"},
+		{"event menu ok", map[string]interface{}{"name": "m", "type": 4, "script": "x", "show_event_menu": true, "event_menu_url": "https://x/{EVENT.ID}", "event_menu_name": "Open"}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

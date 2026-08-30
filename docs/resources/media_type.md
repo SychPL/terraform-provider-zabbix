@@ -18,7 +18,14 @@ resource "zabbix_media_type" "slack" {
   name    = "Slack"
   type    = 4
   timeout = "10s"
-  script  = <<-EOT
+
+  max_attempts     = 5
+  attempt_interval = "30s"
+
+  show_event_menu = true
+  event_menu_url  = "https://slack.example.com/archives/{EVENT.TAGS.channel}"
+  event_menu_name = "Open Slack channel"
+  script          = <<-EOT
     var params = JSON.parse(value);
     var req = new HttpRequest();
     req.addHeader('Content-Type: application/json');
@@ -53,6 +60,7 @@ resource "zabbix_media_type" "email" {
   smtp_authentication = 1
   username            = "zabbix"
   password            = var.smtp_password
+  content_type        = 0
 }
 ```
 
@@ -66,12 +74,21 @@ resource "zabbix_media_type" "email" {
 
 ### Optional
 
+- `attempt_interval` (String) Interval between delivery attempts, 0-1h (e.g. `10s`, `1m`).
+- `content_type` (Number) Message format: 0 - plain text, 1 - HTML (Email).
+- `description` (String) Description of the media type.
 - `enabled` (Boolean) Whether the media type is enabled.
+- `event_menu_name` (String) Name of the event menu entry (Webhook).
+- `event_menu_url` (String) URL of the event menu entry, supports `{EVENT.TAGS.*}` macros (Webhook).
 - `exec_path` (String) Script name. Required for type 1 (Script).
 - `gsm_modem` (String) GSM modem serial device. Required for type 2 (SMS).
+- `max_attempts` (Number) Maximum number of delivery attempts (1-100).
+- `max_sessions` (Number) Maximum number of alerts processed in parallel: 0 (unlimited) to 100. SMS media types only support 1.
 - `parameter` (Block List) Webhook input parameters (type 4 only). Values are marked sensitive. (see [below for nested schema](#nestedblock--parameter))
 - `password` (String, Sensitive) SMTP password. Only sent when `smtp_authentication` is 1 (Email). Stored in the Terraform state; protect the state accordingly.
+- `process_tags` (Boolean) Process the webhook script response as event tags (Webhook).
 - `script` (String) JavaScript webhook body. Required for type 4 (Webhook). Keep secrets in `parameter` values, not in the script.
+- `show_event_menu` (Boolean) Add an entry to the event menu (Webhook). Requires `event_menu_url` and `event_menu_name`.
 - `smtp_authentication` (Number) SMTP authentication: 0 - none, 1 - normal password (Email).
 - `smtp_email` (String) Sender email address. Required for type 0 (Email).
 - `smtp_helo` (String) SMTP HELO. Required for type 0 (Email).

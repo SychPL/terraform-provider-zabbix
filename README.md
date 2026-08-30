@@ -4,6 +4,9 @@
 
 A Terraform provider for managing Zabbix objects through the JSON-RPC API.
 Tested against **Zabbix 6.4** (see [docker-compose.acc.yml](docker-compose.acc.yml)).
+Zabbix 6.4.1 or newer is required: 6.4.0 cannot validate API tokens
+(`user.checkAuthentication` gained its `token` parameter in 6.4.1) and is
+rejected at configure time; other version lines produce an "untested" warning.
 
 ## Resources
 
@@ -11,7 +14,7 @@ Tested against **Zabbix 6.4** (see [docker-compose.acc.yml](docker-compose.acc.y
 |---|---|
 | `zabbix_host_group` | Host groups |
 | `zabbix_host` | Hosts with an optional main agent interface (IP or DNS), groups, templates, visible name, status |
-| `zabbix_media_type` | Email (incl. SMTP auth/TLS), script, SMS and webhook media types |
+| `zabbix_media_type` | Email (incl. SMTP auth/TLS), script, SMS and webhook media types, incl. retry/concurrency options and the webhook event menu |
 | `zabbix_action` | Trigger actions with conditions and "send message" operations |
 
 All resources support `terraform import` using the Zabbix object ID.
@@ -69,7 +72,10 @@ Terraform state. Use an encrypted, access-controlled state backend.
 - **Read errors never drop resources from state.** Only a confirmed "not found"
   (empty API result) removes a resource; transport errors, timeouts and expired
   sessions are surfaced as errors. Note that Zabbix returns an empty result also
-  when the user has no permission to see the object.
+  when the user has no permission to see the object. The same applies to
+  `terraform destroy`: an object the credentials can no longer see is treated
+  as already deleted (the Zabbix API cannot distinguish the two cases), so use
+  credentials whose permissions cover everything under management.
 - **`zabbix_host` only manages the main agent interface** - and the interface
   is optional: leave `ip` and `dns` empty to create the host without one (for
   trapper or dependent items). The interface is updated with
@@ -86,6 +92,13 @@ Terraform state. Use an encrypted, access-controlled state backend.
 - **`zabbix_action`** supports trigger actions (`eventsource = 0`, ForceNew) with
   "send message" operations to user groups and/or users. `condition` is a set,
   so ordering does not produce diffs.
+- Every CRUD operation defaults to a 2-minute timeout; raise it per resource
+  with a `timeouts` block (e.g. `timeouts { create = "15m" }`) when an apply
+  links large templates.
+- The provider authenticates every request with an `Authorization: Bearer`
+  header only. If configure succeeds but mutations fail with "Not authorized",
+  a proxy in front of Zabbix is probably stripping the header (compare
+  [ZBX-22952](https://support.zabbix.com/browse/ZBX-22952)).
 - Deletes are idempotent: an object already removed in Zabbix does not fail
   `terraform destroy`.
 - **Objects the provider cannot represent are refused, not rewritten.** If an
@@ -132,7 +145,8 @@ provider_installation {
 ```
 
 ```sh
-go build -o terraform-provider-zabbix .        # terraform-provider-zabbix.exe on Windows
+go build -o terraform-provider-zabbix .        # Linux/macOS
+go build -o terraform-provider-zabbix.exe .    # Windows (dev_overrides needs the .exe suffix)
 cd example_deployment && terraform apply
 ```
 

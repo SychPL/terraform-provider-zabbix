@@ -202,6 +202,15 @@ type MediaType struct {
 	Script             string           `json:"script"`
 	Timeout            string           `json:"timeout"`
 	Parameters         []MediaTypeParam `json:"parameters"`
+	Description        string           `json:"description"`
+	MaxSessions        string           `json:"maxsessions"`      // parallel alert sessions; SMS supports only "1"
+	MaxAttempts        string           `json:"maxattempts"`      // delivery attempts, 1-100
+	AttemptInterval    string           `json:"attempt_interval"` // 0-1h with time suffix
+	ContentType        string           `json:"content_type"`     // Email: "0" plain text, "1" HTML
+	ProcessTags        string           `json:"process_tags"`     // Webhook: "1" = response processed as tags
+	ShowEventMenu      string           `json:"show_event_menu"`  // Webhook: "1" = event menu entry
+	EventMenuURL       string           `json:"event_menu_url"`   // Webhook
+	EventMenuName      string           `json:"event_menu_name"`  // Webhook
 	// ClearParameters forces an empty parameter list even for script media
 	// types; set on a type change so webhook parameters do not linger.
 	ClearParameters bool `json:"-"`
@@ -436,14 +445,16 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		// The body is deliberately not read or included: a misbehaving proxy
+		// could echo the request (and its credentials) back into Terraform's
+		// diagnostics, and reading it first would allow forcing a large
+		// allocation on every failing call.
+		return fmt.Errorf("unexpected http status %d (%s) from %s", resp.StatusCode, http.StatusText(resp.StatusCode), c.url)
+	}
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return fmt.Errorf("failed to read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		// The body is deliberately not included: a misbehaving proxy could echo
-		// the request (and its credentials) back into Terraform's diagnostics.
-		return fmt.Errorf("unexpected http status %d (%s) from %s", resp.StatusCode, http.StatusText(resp.StatusCode), c.url)
 	}
 
 	var rpcResp jsonRpcResponse
@@ -710,6 +721,17 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 		"script":              "",
 		"timeout":             "30s",
 		"parameters":          []MediaTypeParam{},
+		// Common to every transport, always taken from the configuration.
+		"description":      mt.Description,
+		"maxsessions":      mt.MaxSessions,
+		"maxattempts":      mt.MaxAttempts,
+		"attempt_interval": mt.AttemptInterval,
+		// Type-specific fields reset to API defaults unless the type sets them.
+		"content_type":    "1",
+		"process_tags":    "0",
+		"show_event_menu": "0",
+		"event_menu_url":  "",
+		"event_menu_name": "",
 	}
 	switch mt.Type {
 	case "0": // Email
@@ -721,6 +743,7 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 		params["smtp_verify_peer"] = mt.SMTPVerifyPeer
 		params["smtp_verify_host"] = mt.SMTPVerifyHost
 		params["smtp_authentication"] = mt.SMTPAuthentication
+		params["content_type"] = mt.ContentType
 		if mt.SMTPAuthentication == "1" {
 			params["username"] = mt.Username
 			params["passwd"] = mt.Passwd
@@ -735,6 +758,10 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 	case "4": // Webhook
 		params["script"] = mt.Script
 		params["timeout"] = mt.Timeout
+		params["process_tags"] = mt.ProcessTags
+		params["show_event_menu"] = mt.ShowEventMenu
+		params["event_menu_url"] = mt.EventMenuURL
+		params["event_menu_name"] = mt.EventMenuName
 		if mt.Parameters != nil {
 			params["parameters"] = mt.Parameters
 		}
@@ -756,7 +783,9 @@ func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType,
 		"output": []string{"mediatypeid", "name", "type", "status",
 			"smtp_server", "smtp_port", "smtp_helo", "smtp_email", "smtp_security",
 			"smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "passwd",
-			"exec_path", "gsm_modem", "script", "timeout", "parameters"},
+			"exec_path", "gsm_modem", "script", "timeout", "parameters",
+			"description", "maxsessions", "maxattempts", "attempt_interval",
+			"content_type", "process_tags", "show_event_menu", "event_menu_url", "event_menu_name"},
 	}
 	var res []MediaType
 	if err := c.Call(ctx, "mediatype.get", params, &res); err != nil {

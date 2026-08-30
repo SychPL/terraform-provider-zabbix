@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -94,6 +95,9 @@ func TestMediaTypeRead_TypeAwareReset(t *testing.T) {
 		"smtp_server":"stale.mail","smtp_port":"587","smtp_helo":"x","smtp_email":"a@x","smtp_security":"1",
 		"smtp_verify_peer":"1","smtp_verify_host":"1","smtp_authentication":"1","username":"u","passwd":"secret",
 		"exec_path":"","gsm_modem":"","script":"return 1;","timeout":"10s",
+		"description":"managed","maxsessions":"0","maxattempts":"5","attempt_interval":"1m",
+		"content_type":"0","process_tags":"1","show_event_menu":"1",
+		"event_menu_url":"https://x/{EVENT.ID}","event_menu_name":"Open",
 		"parameters":[{"name":"a","value":"b"},{"name":"c","value":"d"}]}]`)
 	d := readInto(t, resourceMediaType(), c, "46")
 
@@ -102,6 +106,15 @@ func TestMediaTypeRead_TypeAwareReset(t *testing.T) {
 	}
 	if d.Get("script") != "return 1;" || d.Get("timeout") != "10s" {
 		t.Errorf("webhook attributes not mapped")
+	}
+	if d.Get("content_type") != 1 {
+		t.Errorf("content_type is an email field and must be reset to its schema default for a webhook, got %v", d.Get("content_type"))
+	}
+	if d.Get("description") != "managed" || d.Get("max_sessions") != 0 || d.Get("max_attempts") != 5 || d.Get("attempt_interval") != "1m" {
+		t.Errorf("common fields not mapped: %v %v %v %v", d.Get("description"), d.Get("max_sessions"), d.Get("max_attempts"), d.Get("attempt_interval"))
+	}
+	if d.Get("process_tags") != true || d.Get("show_event_menu") != true || d.Get("event_menu_url") != "https://x/{EVENT.ID}" || d.Get("event_menu_name") != "Open" {
+		t.Errorf("webhook event menu fields not mapped")
 	}
 	params := d.Get("parameter").([]interface{})
 	if len(params) != 2 || params[1].(map[string]interface{})["value"] != "d" {
@@ -113,12 +126,13 @@ func TestMediaTypeRead_EmailWithAuth(t *testing.T) {
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"45","type":"0","name":"mail","status":"1",
 		"smtp_server":"mail.x","smtp_port":"587","smtp_helo":"x","smtp_email":"a@x","smtp_security":"1",
 		"smtp_verify_peer":"1","smtp_verify_host":"0","smtp_authentication":"1","username":"u","passwd":"secret",
-		"exec_path":"","gsm_modem":"","script":"","timeout":"30s","parameters":[]}]`)
+		"exec_path":"","gsm_modem":"","script":"","timeout":"30s","content_type":"0","parameters":[]}]`)
 	d := readInto(t, resourceMediaType(), c, "45")
 	want := map[string]interface{}{
 		"enabled": false, "smtp_server": "mail.x", "smtp_port": 587, "smtp_security": 1,
 		"smtp_verify_peer": true, "smtp_verify_host": false, "smtp_authentication": 1,
 		"username": "u", "password": "secret", "script": "", "timeout": "30s",
+		"content_type": 0, "max_attempts": 3, "attempt_interval": "10s",
 	}
 	for k, v := range want {
 		if got := d.Get(k); got != v {
@@ -320,6 +334,41 @@ func TestHostResource_NoInterfaceLifecycle(t *testing.T) {
 	}
 	if len(s.calls("hostinterface.delete")) != 1 || d.Get("ip") != "" {
 		t.Fatalf("removing the address must delete the interface, ip=%v", d.Get("ip"))
+	}
+}
+
+func TestHostCreate_SendsInterfacePayload(t *testing.T) {
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.create":
+			var params struct {
+				Interfaces []map[string]string `json:"interfaces"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				t.Errorf("unmarshal host.create params: %v", err)
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params."}
+			}
+			want := map[string]string{"type": "1", "main": "1", "useip": "1", "ip": "192.0.2.7", "dns": "", "port": "10051"}
+			if len(params.Interfaces) != 1 || !reflect.DeepEqual(params.Interfaces[0], want) {
+				t.Errorf("interface payload: want %v, got %v", want, params.Interfaces)
+			}
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "host.get":
+			return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+				"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.7","dns":"","port":"10051"}]}]`), nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceHost()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": "192.0.2.7", "port": "10051"})
+	if diags := r.CreateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if d.Get("port") != "10051" || d.Get("ip") != "192.0.2.7" {
+		t.Errorf("round-trip: ip=%v port=%v", d.Get("ip"), d.Get("port"))
 	}
 }
 

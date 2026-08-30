@@ -565,6 +565,24 @@ func TestMediaTypeParams_TypeAware(t *testing.T) {
 	if emailAuth["passwd"] != "p" {
 		t.Error("passwd must be sent when smtp_authentication is 1")
 	}
+
+	// Common fields are always sent; type-specific extras only for their type.
+	full := mediaTypeParams(&MediaType{Type: "4", Script: "return 1;", Timeout: "30s",
+		Description: "d", MaxSessions: "0", MaxAttempts: "5", AttemptInterval: "1m",
+		ContentType: "0", ProcessTags: "1", ShowEventMenu: "1", EventMenuURL: "https://x", EventMenuName: "Open"})
+	for k, want := range map[string]interface{}{
+		"description": "d", "maxsessions": "0", "maxattempts": "5", "attempt_interval": "1m",
+		"process_tags": "1", "show_event_menu": "1", "event_menu_url": "https://x", "event_menu_name": "Open",
+		"content_type": "1", // email-only: reset to the API default for a webhook
+	} {
+		if full[k] != want {
+			t.Errorf("%s: want %v, got %v", k, want, full[k])
+		}
+	}
+	sms := mediaTypeParams(&MediaType{Type: "2", GSMModem: "/dev/ttyS0", ProcessTags: "1", EventMenuURL: "https://stale"})
+	if sms["process_tags"] != "0" || sms["event_menu_url"] != "" || sms["show_event_menu"] != "0" {
+		t.Error("webhook fields must be cleared for an SMS media type")
+	}
 }
 
 func TestActionParams_EventSourceOnlyOnCreate(t *testing.T) {
