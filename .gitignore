@@ -1,0 +1,24 @@
+# Compiled binaries
+terraform-provider-zabbix
+terraform-provider-zabbix.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Local Go files & dependencies
+bin/
+pkg/
+src/
+
+# IDE configurations
+.idea/
+.vscode/
+*.suo
+*.sln
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
