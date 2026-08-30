@@ -48,10 +48,11 @@ func resourceHost() *schema.Resource {
 				Description: "Whether to connect to the host interface via IP (true) or DNS (false)",
 			},
 			"port": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "10050",
-				Description: "Main monitoring Port for the host agent interface",
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "10050",
+				ValidateFunc: validatePort,
+				Description:  "Main monitoring Port for the host agent interface",
 			},
 		},
 	}
@@ -94,12 +95,8 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 	id := d.Id()
 
 	host, err := client.GetHost(ctx, id)
-	if err == ErrNotFound {
-		d.SetId("")
-		return nil
-	}
 	if err != nil {
-		return diag.FromErr(err)
+		return readError(ctx, d, "Host", err)
 	}
 
 	if err := d.Set("host", host.Host); err != nil {
@@ -215,7 +212,8 @@ func resourceHostDelete(ctx context.Context, d *schema.ResourceData, m interface
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteHost(ctx, id); err != nil {
+	err := client.DeleteHost(ctx, id)
+	if isDeleteSuccess(err) != nil {
 		return diag.FromErr(err)
 	}
 

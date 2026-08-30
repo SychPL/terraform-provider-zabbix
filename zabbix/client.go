@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,13 @@ import (
 )
 
 var ErrNotFound = fmt.Errorf("resource not found")
+
+const objectMissing = "No permissions to referred object or it does not exist!"
+
+func IsObjectMissing(err error) bool {
+	var rpcErr *JsonRpcError
+	return errors.As(err, &rpcErr) && rpcErr.Data == objectMissing
+}
 
 type ZabbixClient struct {
 	URL          string

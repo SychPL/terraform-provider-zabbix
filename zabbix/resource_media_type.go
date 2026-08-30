@@ -125,12 +125,8 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	id := d.Id()
 
 	mt, err := client.GetMediaType(ctx, id)
-	if err == ErrNotFound {
-		d.SetId("")
-		return nil
-	}
 	if err != nil {
-		return diag.FromErr(err)
+		return readError(ctx, d, "Media Type", err)
 	}
 
 	d.Set("name", mt.Name)
@@ -198,7 +194,8 @@ func resourceMediaTypeDelete(ctx context.Context, d *schema.ResourceData, m inte
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteMediaType(ctx, id); err != nil {
+	err := client.DeleteMediaType(ctx, id)
+	if isDeleteSuccess(err) != nil {
 		return diag.FromErr(err)
 	}
 

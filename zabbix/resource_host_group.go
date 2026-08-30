@@ -41,12 +41,8 @@ func resourceHostGroupRead(ctx context.Context, d *schema.ResourceData, m interf
 	id := d.Id()
 
 	group, err := client.GetHostGroup(ctx, id)
-	if err == ErrNotFound {
-		d.SetId("")
-		return nil
-	}
 	if err != nil {
-		return diag.FromErr(err)
+		return readError(ctx, d, "Host Group", err)
 	}
 
 	if err := d.Set("name", group.Name); err != nil {
@@ -74,7 +70,8 @@ func resourceHostGroupDelete(ctx context.Context, d *schema.ResourceData, m inte
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteHostGroup(ctx, id); err != nil {
+	err := client.DeleteHostGroup(ctx, id)
+	if isDeleteSuccess(err) != nil {
 		return diag.FromErr(err)
 	}
 

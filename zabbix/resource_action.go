@@ -33,10 +33,11 @@ func resourceAction() *schema.Resource {
 				Description: "Whether the action is enabled",
 			},
 			"esc_period": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "1h",
-				Description: "Default operation step duration",
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "1h",
+				ValidateFunc: validateEscPeriod,
+				Description:  "Default operation step duration",
 			},
 			"evaltype": {
 				Type:        schema.TypeInt,
@@ -81,9 +82,10 @@ func resourceAction() *schema.Resource {
 							Default:  0, // Send message
 						},
 						"esc_period": {
-							Type:     schema.TypeString,
-							Optional: true,
-							Default:  "0",
+							Type:         schema.TypeString,
+							Optional:     true,
+							Default:      "0",
+							ValidateFunc: validateOperationEscPeriod,
 						},
 						"esc_step_from": {
 							Type:     schema.TypeInt,
@@ -145,12 +147,8 @@ func resourceActionRead(ctx context.Context, d *schema.ResourceData, m interface
 	id := d.Id()
 
 	action, err := client.GetAction(ctx, id)
-	if err == ErrNotFound {
-		d.SetId("")
-		return nil
-	}
 	if err != nil {
-		return diag.FromErr(err)
+		return readError(ctx, d, "Action", err)
 	}
 
 	d.Set("name", action.Name)
@@ -226,7 +224,8 @@ func resourceActionDelete(ctx context.Context, d *schema.ResourceData, m interfa
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteAction(ctx, id); err != nil {
+	err := client.DeleteAction(ctx, id)
+	if isDeleteSuccess(err) != nil {
 		return diag.FromErr(err)
 	}
 
