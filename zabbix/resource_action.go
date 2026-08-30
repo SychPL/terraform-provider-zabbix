@@ -2,8 +2,6 @@ package zabbix
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -133,7 +131,7 @@ func resourceActionCreate(ctx context.Context, d *schema.ResourceData, m interfa
 	client := m.(*ZabbixClient)
 
 	action := expandAction(d)
-	actionID, err := client.CreateAction(action)
+	actionID, err := client.CreateAction(ctx, action)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -146,11 +144,13 @@ func resourceActionRead(ctx context.Context, d *schema.ResourceData, m interface
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	action, err := client.GetAction(id)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG ZABBIX] GetAction error: %s\n", err)
+	action, err := client.GetAction(ctx, id)
+	if err == ErrNotFound {
 		d.SetId("")
 		return nil
+	}
+	if err != nil {
+		return diag.FromErr(err)
 	}
 
 	d.Set("name", action.Name)
@@ -215,7 +215,7 @@ func resourceActionUpdate(ctx context.Context, d *schema.ResourceData, m interfa
 	action := expandAction(d)
 	action.ActionID = d.Id()
 
-	if err := client.UpdateAction(action); err != nil {
+	if err := client.UpdateAction(ctx, action); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -226,7 +226,7 @@ func resourceActionDelete(ctx context.Context, d *schema.ResourceData, m interfa
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteAction(id); err != nil {
+	if err := client.DeleteAction(ctx, id); err != nil {
 		return diag.FromErr(err)
 	}
 

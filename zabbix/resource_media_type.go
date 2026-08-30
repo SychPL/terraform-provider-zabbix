@@ -91,8 +91,27 @@ func resourceMediaType() *schema.Resource {
 func resourceMediaTypeCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	mediaTypeType := d.Get("type").(int)
+	if mediaTypeType == 0 {
+		if d.Get("smtp_server").(string) == "" {
+			return diag.Errorf("smtp_server must be specified for Email media type")
+		}
+	} else if mediaTypeType == 1 {
+		if d.Get("exec_path").(string) == "" {
+			return diag.Errorf("exec_path must be specified for Script media type")
+		}
+	} else if mediaTypeType == 2 {
+		if d.Get("gsm_modem").(string) == "" {
+			return diag.Errorf("gsm_modem must be specified for SMS media type")
+		}
+	} else if mediaTypeType == 4 {
+		if d.Get("script").(string) == "" {
+			return diag.Errorf("script must be specified for Webhook media type")
+		}
+	}
+
 	mt := expandMediaType(d)
-	mediaTypeID, err := client.CreateMediaType(mt)
+	mediaTypeID, err := client.CreateMediaType(ctx, mt)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -105,10 +124,13 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	mt, err := client.GetMediaType(id)
-	if err != nil {
+	mt, err := client.GetMediaType(ctx, id)
+	if err == ErrNotFound {
 		d.SetId("")
 		return nil
+	}
+	if err != nil {
+		return diag.FromErr(err)
 	}
 
 	d.Set("name", mt.Name)
@@ -133,6 +155,8 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 			}
 		}
 		d.Set("parameter", params)
+	} else {
+		d.Set("parameter", []interface{}{})
 	}
 
 	return nil
@@ -141,10 +165,29 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	mediaTypeType := d.Get("type").(int)
+	if mediaTypeType == 0 {
+		if d.Get("smtp_server").(string) == "" {
+			return diag.Errorf("smtp_server must be specified for Email media type")
+		}
+	} else if mediaTypeType == 1 {
+		if d.Get("exec_path").(string) == "" {
+			return diag.Errorf("exec_path must be specified for Script media type")
+		}
+	} else if mediaTypeType == 2 {
+		if d.Get("gsm_modem").(string) == "" {
+			return diag.Errorf("gsm_modem must be specified for SMS media type")
+		}
+	} else if mediaTypeType == 4 {
+		if d.Get("script").(string) == "" {
+			return diag.Errorf("script must be specified for Webhook media type")
+		}
+	}
+
 	mt := expandMediaType(d)
 	mt.MediaTypeID = d.Id()
 
-	if err := client.UpdateMediaType(mt); err != nil {
+	if err := client.UpdateMediaType(ctx, mt); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -155,7 +198,7 @@ func resourceMediaTypeDelete(ctx context.Context, d *schema.ResourceData, m inte
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteMediaType(id); err != nil {
+	if err := client.DeleteMediaType(ctx, id); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -170,16 +213,16 @@ func expandMediaType(d *schema.ResourceData) *MediaType {
 	}
 
 	mt := &MediaType{
-		Name:        d.Get("name").(string),
-		Type:        strconv.Itoa(d.Get("type").(int)),
-		Status:      status,
-		SMTPServer:  d.Get("smtp_server").(string),
-		SMTPHelo:    d.Get("smtp_helo").(string),
-		SMTPEmail:   d.Get("smtp_email").(string),
-		ExecPath:    d.Get("exec_path").(string),
-		GSMModem:    d.Get("gsm_modem").(string),
-		Script:      d.Get("script").(string),
-		Timeout:     d.Get("timeout").(string),
+		Name:       d.Get("name").(string),
+		Type:       strconv.Itoa(d.Get("type").(int)),
+		Status:     status,
+		SMTPServer: d.Get("smtp_server").(string),
+		SMTPHelo:   d.Get("smtp_helo").(string),
+		SMTPEmail:  d.Get("smtp_email").(string),
+		ExecPath:   d.Get("exec_path").(string),
+		GSMModem:   d.Get("gsm_modem").(string),
+		Script:     d.Get("script").(string),
+		Timeout:    d.Get("timeout").(string),
 	}
 
 	if rawParams, ok := d.GetOk("parameter"); ok {

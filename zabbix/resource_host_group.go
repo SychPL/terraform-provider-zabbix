@@ -27,7 +27,7 @@ func resourceHostGroupCreate(ctx context.Context, d *schema.ResourceData, m inte
 	client := m.(*ZabbixClient)
 	name := d.Get("name").(string)
 
-	groupID, err := client.CreateHostGroup(name)
+	groupID, err := client.CreateHostGroup(ctx, name)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -40,11 +40,13 @@ func resourceHostGroupRead(ctx context.Context, d *schema.ResourceData, m interf
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	group, err := client.GetHostGroup(id)
-	if err != nil {
-		// If Zabbix group is missing, remove it from Terraform state
+	group, err := client.GetHostGroup(ctx, id)
+	if err == ErrNotFound {
 		d.SetId("")
 		return nil
+	}
+	if err != nil {
+		return diag.FromErr(err)
 	}
 
 	if err := d.Set("name", group.Name); err != nil {
@@ -60,7 +62,7 @@ func resourceHostGroupUpdate(ctx context.Context, d *schema.ResourceData, m inte
 
 	if d.HasChange("name") {
 		name := d.Get("name").(string)
-		if err := client.UpdateHostGroup(id, name); err != nil {
+		if err := client.UpdateHostGroup(ctx, id, name); err != nil {
 			return diag.FromErr(err)
 		}
 	}
@@ -72,7 +74,7 @@ func resourceHostGroupDelete(ctx context.Context, d *schema.ResourceData, m inte
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteHostGroup(id); err != nil {
+	if err := client.DeleteHostGroup(ctx, id); err != nil {
 		return diag.FromErr(err)
 	}
 

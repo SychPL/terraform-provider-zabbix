@@ -33,8 +33,19 @@ func resourceHost() *schema.Resource {
 			},
 			"ip": {
 				Type:        schema.TypeString,
-				Required:    true,
-				Description: "Main monitoring IP address for the host agent interface",
+				Optional:    true,
+				Description: "IP address of the host agent interface",
+			},
+			"dns": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Description: "DNS name of the host agent interface",
+			},
+			"use_ip": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     true,
+				Description: "Whether to connect to the host interface via IP (true) or DNS (false)",
 			},
 			"port": {
 				Type:        schema.TypeString,
@@ -52,10 +63,24 @@ func resourceHostCreate(ctx context.Context, d *schema.ResourceData, m interface
 	host := d.Get("host").(string)
 	groups := getStringList(d, "groups")
 	templates := getStringList(d, "templates")
+
+	useIPVal := d.Get("use_ip").(bool)
+	useIP := "1"
+	if !useIPVal {
+		useIP = "0"
+	}
 	ip := d.Get("ip").(string)
+	dns := d.Get("dns").(string)
 	port := d.Get("port").(string)
 
-	hostID, err := client.CreateHost(host, groups, templates, ip, port)
+	if useIPVal && ip == "" {
+		return diag.Errorf("ip must be specified when use_ip is true")
+	}
+	if !useIPVal && dns == "" {
+		return diag.Errorf("dns must be specified when use_ip is false")
+	}
+
+	hostID, err := client.CreateHost(ctx, host, groups, templates, useIP, ip, dns, port)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -68,10 +93,13 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	host, err := client.GetHost(id)
-	if err != nil {
+	host, err := client.GetHost(ctx, id)
+	if err == ErrNotFound {
 		d.SetId("")
 		return nil
+	}
+	if err != nil {
+		return diag.FromErr(err)
 	}
 
 	if err := d.Set("host", host.Host); err != nil {
@@ -96,14 +124,20 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 		return diag.FromErr(err)
 	}
 
-	// Read interface IP and Port (from the first interface)
-	if len(host.Interfaces) > 0 {
-		if err := d.Set("ip", host.Interfaces[0].IP); err != nil {
-			return diag.FromErr(err)
+	// Find the main agent interface (type = 1 and main = 1)
+	var mainInter *HostInterface
+	for _, inter := range host.Interfaces {
+		if inter.Type == "1" && inter.Main == "1" {
+			mainInter = &inter
+			break
 		}
-		if err := d.Set("port", host.Interfaces[0].Port); err != nil {
-			return diag.FromErr(err)
-		}
+	}
+
+	if mainInter != nil {
+		d.Set("use_ip", mainInter.UseIP == "1")
+		d.Set("ip", mainInter.IP)
+		d.Set("dns", mainInter.DNS)
+		d.Set("port", mainInter.Port)
 	}
 
 	return nil
@@ -113,15 +147,64 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if d.HasChanges("host", "groups", "templates", "ip", "port") {
+	if d.HasChanges("host", "groups", "templates") {
 		host := d.Get("host").(string)
 		groups := getStringList(d, "groups")
-		templates := getStringList(d, "templates")
+
+		oldRaw, newRaw := d.GetChange("templates")
+		oldSet := oldRaw.(*schema.Set).List()
+		newSet := newRaw.(*schema.Set).List()
+
+		newMap := make(map[string]bool)
+		var templates []string
+		for _, v := range newSet {
+			val := v.(string)
+			templates = append(templates, val)
+			newMap[val] = true
+		}
+
+		var templatesClear []string
+		for _, v := range oldSet {
+			val := v.(string)
+			if !newMap[val] {
+				templatesClear = append(templatesClear, val)
+			}
+		}
+
+		if err := client.UpdateHost(ctx, id, host, groups, templates, templatesClear); err != nil {
+			return diag.FromErr(err)
+		}
+	}
+
+	if d.HasChanges("use_ip", "ip", "dns", "port") {
+		inter, err := client.GetHostInterface(ctx, id)
+		if err != nil {
+			return diag.Errorf("failed to retrieve host interface for update: %s", err)
+		}
+
+		useIPVal := d.Get("use_ip").(bool)
+		useIP := "1"
+		if !useIPVal {
+			useIP = "0"
+		}
 		ip := d.Get("ip").(string)
+		dns := d.Get("dns").(string)
 		port := d.Get("port").(string)
 
-		if err := client.UpdateHost(id, host, groups, templates, ip, port); err != nil {
-			return diag.FromErr(err)
+		if useIPVal && ip == "" {
+			return diag.Errorf("ip must be specified when use_ip is true")
+		}
+		if !useIPVal && dns == "" {
+			return diag.Errorf("dns must be specified when use_ip is false")
+		}
+
+		inter.UseIP = useIP
+		inter.IP = ip
+		inter.DNS = dns
+		inter.Port = port
+
+		if err := client.UpdateHostInterface(ctx, inter); err != nil {
+			return diag.Errorf("failed to update host interface: %s", err)
 		}
 	}
 
@@ -132,7 +215,7 @@ func resourceHostDelete(ctx context.Context, d *schema.ResourceData, m interface
 	client := m.(*ZabbixClient)
 	id := d.Id()
 
-	if err := client.DeleteHost(id); err != nil {
+	if err := client.DeleteHost(ctx, id); err != nil {
 		return diag.FromErr(err)
 	}
 

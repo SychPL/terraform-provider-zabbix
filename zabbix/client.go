@@ -2,20 +2,29 @@ package zabbix
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"time"
+	"sync"
 )
 
+var ErrNotFound = fmt.Errorf("resource not found")
+
 type ZabbixClient struct {
-	URL        string
-	Username   string
-	Password   string
-	AuthToken  string
-	HTTPClient *http.Client
+	URL          string
+	Username     string
+	Password     string
+	APIToken     string
+	SessionToken string
+	TLSInsecure  bool
+	CACertFile   string
+	HTTPClient   *http.Client
+	loginMu      sync.Mutex
 }
 
 type JsonRpcRequest struct {
@@ -49,11 +58,11 @@ type HostGroup struct {
 }
 
 type Host struct {
-	HostID     string           `json:"hostid"`
-	Host       string           `json:"host"`
-	Groups     []HostGroupRef   `json:"groups"`
-	ParentTemplates []TemplateRef `json:"parentTemplates,omitempty"`
-	Interfaces []HostInterface  `json:"interfaces"`
+	HostID          string          `json:"hostid"`
+	Host            string          `json:"host"`
+	Groups          []HostGroupRef  `json:"groups"`
+	ParentTemplates []TemplateRef   `json:"parentTemplates,omitempty"`
+	Interfaces      []HostInterface `json:"interfaces"`
 }
 
 type HostGroupRef struct {
@@ -66,6 +75,7 @@ type TemplateRef struct {
 
 type HostInterface struct {
 	InterfaceID string `json:"interfaceid,omitempty"`
+	HostID      string `json:"hostid,omitempty"`
 	Type        string `json:"type"`  // "1" = Agent, "2" = SNMP, "3" = IPMI, "4" = JMX
 	Main        string `json:"main"`  // "1" = default
 	UseIP       string `json:"useip"` // "1" = IP, "0" = DNS
@@ -97,26 +107,26 @@ type MediaTypeParam struct {
 type Action struct {
 	ActionID    string            `json:"actionid,omitempty"`
 	Name        string            `json:"name"`
-	EventSource string            `json:"eventsource"` // string
-	Status      string            `json:"status"`      // string
+	EventSource string            `json:"eventsource"` // "0" = Triggers
+	Status      string            `json:"status"`      // "0" = Enabled, "1" = Disabled
 	EscPeriod   string            `json:"esc_period,omitempty"`
 	Filter      ActionFilter      `json:"filter"`
 	Operations  []ActionOperation `json:"operations,omitempty"`
 }
 
 type ActionFilter struct {
-	EvalType   string            `json:"evaltype"` // string
+	EvalType   string            `json:"evaltype"` // "0" = AND/OR
 	Conditions []ActionCondition `json:"conditions"`
 }
 
 type ActionCondition struct {
-	ConditionType string `json:"conditiontype"` // string
-	Operator      string `json:"operator"`      // string
+	ConditionType string `json:"conditiontype"`
+	Operator      string `json:"operator"`
 	Value         string `json:"value"`
 }
 
 type ActionOperation struct {
-	OperationType string                 `json:"operationtype"` // string
+	OperationType string                 `json:"operationtype"` // "0" = send message
 	EscPeriod     string                 `json:"esc_period,omitempty"`
 	EscStepFrom   string                 `json:"esc_step_from,omitempty"`
 	EscStepTo     string                 `json:"esc_step_to,omitempty"`
@@ -126,7 +136,7 @@ type ActionOperation struct {
 
 type ActionOpMessage struct {
 	MediaTypeID string `json:"mediatypeid,omitempty"`
-	DefaultMsg  string `json:"default_msg"` // string
+	DefaultMsg  string `json:"default_msg"` // "1" = yes, "0" = no
 	Subject     string `json:"subject,omitempty"`
 	Message     string `json:"message,omitempty"`
 }
@@ -135,18 +145,92 @@ type ActionOpMessageGrp struct {
 	Usrgrpid string `json:"usrgrpid"`
 }
 
-func NewZabbixClient(url, username, password string) *ZabbixClient {
-	return &ZabbixClient{
-		URL:      url,
-		Username: username,
-		Password: password,
-		HTTPClient: &http.Client{
-			Timeout: 15 * time.Second,
+func NewZabbixClient(url, username, password, apiToken string, tlsInsecure bool, caCertFile string) (*ZabbixClient, error) {
+	client := &ZabbixClient{
+		URL:         url,
+		Username:    username,
+		Password:    password,
+		APIToken:    apiToken,
+		TLSInsecure: tlsInsecure,
+		CACertFile:  caCertFile,
+	}
+
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tlsConfig := &tls.Config{}
+
+	if tlsInsecure {
+		tlsConfig.InsecureSkipVerify = true
+	}
+
+	if caCertFile != "" {
+		caCert, err := os.ReadFile(caCertFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert file: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert PEM")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	tr.TLSClientConfig = tlsConfig
+
+	client.HTTPClient = &http.Client{
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}
+
+	return client, nil
 }
 
-func (c *ZabbixClient) Call(method string, params interface{}, result interface{}) error {
+func (c *ZabbixClient) prepareRequest(ctx context.Context, method string, reqBytes []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", c.URL, bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json-rpc")
+
+	if method != "apiinfo.version" {
+		if c.APIToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.APIToken)
+		} else if c.SessionToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.SessionToken)
+		}
+	}
+	return req, nil
+}
+
+func (c *ZabbixClient) ensureLogin(ctx context.Context) error {
+	if c.APIToken != "" {
+		return nil
+	}
+
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+
+	if c.SessionToken != "" {
+		return nil
+	}
+
+	params := map[string]string{
+		"username": c.Username,
+		"password": c.Password,
+	}
+
+	var token string
+	err := c.rawCall(ctx, "user.login", params, &token)
+	if err != nil {
+		return fmt.Errorf("login failed: %w", err)
+	}
+
+	c.SessionToken = token
+	return nil
+}
+
+func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interface{}, result interface{}) error {
 	reqID := 1
 	reqPayload := JsonRpcRequest{
 		Jsonrpc: "2.0",
@@ -155,17 +239,17 @@ func (c *ZabbixClient) Call(method string, params interface{}, result interface{
 		ID:      reqID,
 	}
 
-	// Attach Auth Token if logged in
-	if c.AuthToken != "" && method != "user.login" && method != "apiinfo.version" {
-		reqPayload.Auth = c.AuthToken
-	}
-
 	reqBytes, err := json.Marshal(reqPayload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := c.HTTPClient.Post(c.URL, "application/json-rpc", bytes.NewBuffer(reqBytes))
+	req, err := c.prepareRequest(ctx, method, reqBytes)
+	if err != nil {
+		return fmt.Errorf("failed to prepare request: %w", err)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http request failed: %w", err)
 	}
@@ -189,6 +273,10 @@ func (c *ZabbixClient) Call(method string, params interface{}, result interface{
 		return rpcResp.Error
 	}
 
+	if rpcResp.Jsonrpc != "2.0" || rpcResp.Result == nil {
+		return fmt.Errorf("invalid json-rpc response")
+	}
+
 	if result != nil {
 		if err := json.Unmarshal(rpcResp.Result, result); err != nil {
 			return fmt.Errorf("failed to parse result: %w", err)
@@ -198,31 +286,52 @@ func (c *ZabbixClient) Call(method string, params interface{}, result interface{
 	return nil
 }
 
-func (c *ZabbixClient) Login() error {
-	params := map[string]string{
-		"username": c.Username,
-		"password": c.Password,
+func (c *ZabbixClient) Call(ctx context.Context, method string, params interface{}, result interface{}) error {
+	if method != "apiinfo.version" && method != "user.login" {
+		if err := c.ensureLogin(ctx); err != nil {
+			return err
+		}
 	}
 
-	var token string
-	err := c.Call("user.login", params, &token)
+	err := c.rawCall(ctx, method, params, result)
 	if err != nil {
+		if method != "apiinfo.version" && method != "user.login" && isSessionExpiredError(err) {
+			c.loginMu.Lock()
+			c.SessionToken = ""
+			c.loginMu.Unlock()
+
+			if errLogin := c.ensureLogin(ctx); errLogin != nil {
+				return errLogin
+			}
+
+			return c.rawCall(ctx, method, params, result)
+		}
 		return err
 	}
 
-	c.AuthToken = token
 	return nil
+}
+
+func isSessionExpiredError(err error) bool {
+	if rpcErr, ok := err.(*JsonRpcError); ok {
+		return rpcErr.Code == -32602 && (rpcErr.Message == "Session terminated, re-login, please." || rpcErr.Message == "Session expired.")
+	}
+	return false
+}
+
+func (c *ZabbixClient) Login(ctx context.Context) error {
+	return c.ensureLogin(ctx)
 }
 
 // --- HOST GROUP CRUD ---
 
-func (c *ZabbixClient) CreateHostGroup(name string) (string, error) {
+func (c *ZabbixClient) CreateHostGroup(ctx context.Context, name string) (string, error) {
 	params := map[string]string{
 		"name": name,
 	}
 
 	var res map[string][]string
-	err := c.Call("hostgroup.create", params, &res)
+	err := c.Call(ctx, "hostgroup.create", params, &res)
 	if err != nil {
 		return "", err
 	}
@@ -235,44 +344,44 @@ func (c *ZabbixClient) CreateHostGroup(name string) (string, error) {
 	return ids[0], nil
 }
 
-func (c *ZabbixClient) GetHostGroup(id string) (*HostGroup, error) {
+func (c *ZabbixClient) GetHostGroup(ctx context.Context, id string) (*HostGroup, error) {
 	params := map[string]interface{}{
 		"groupids": []string{id},
 		"output":   []string{"groupid", "name"},
 	}
 
 	var res []HostGroup
-	err := c.Call("hostgroup.get", params, &res)
+	err := c.Call(ctx, "hostgroup.get", params, &res)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(res) == 0 {
-		return nil, fmt.Errorf("host group %s not found", id)
+		return nil, ErrNotFound
 	}
 
 	return &res[0], nil
 }
 
-func (c *ZabbixClient) UpdateHostGroup(id string, name string) error {
+func (c *ZabbixClient) UpdateHostGroup(ctx context.Context, id string, name string) error {
 	params := map[string]string{
 		"groupid": id,
 		"name":    name,
 	}
 
 	var res map[string][]string
-	return c.Call("hostgroup.update", params, &res)
+	return c.Call(ctx, "hostgroup.update", params, &res)
 }
 
-func (c *ZabbixClient) DeleteHostGroup(id string) error {
+func (c *ZabbixClient) DeleteHostGroup(ctx context.Context, id string) error {
 	params := []string{id}
 	var res map[string][]string
-	return c.Call("hostgroup.delete", params, &res)
+	return c.Call(ctx, "hostgroup.delete", params, &res)
 }
 
 // --- HOST CRUD ---
 
-func (c *ZabbixClient) CreateHost(name string, groupIds []string, templateIds []string, ip, port string) (string, error) {
+func (c *ZabbixClient) CreateHost(ctx context.Context, name string, groupIds []string, templateIds []string, useIP, ip, dns, port string) (string, error) {
 	groups := make([]HostGroupRef, len(groupIds))
 	for i, id := range groupIds {
 		groups[i] = HostGroupRef{GroupID: id}
@@ -287,9 +396,9 @@ func (c *ZabbixClient) CreateHost(name string, groupIds []string, templateIds []
 		{
 			Type:  "1", // Agent
 			Main:  "1", // Default interface
-			UseIP: "1", // Use IP
+			UseIP: useIP,
 			IP:    ip,
-			DNS:   "",
+			DNS:   dns,
 			Port:  port,
 		},
 	}
@@ -305,7 +414,7 @@ func (c *ZabbixClient) CreateHost(name string, groupIds []string, templateIds []
 	}
 
 	var res map[string][]string
-	err := c.Call("host.create", params, &res)
+	err := c.Call(ctx, "host.create", params, &res)
 	if err != nil {
 		return "", err
 	}
@@ -318,29 +427,29 @@ func (c *ZabbixClient) CreateHost(name string, groupIds []string, templateIds []
 	return ids[0], nil
 }
 
-func (c *ZabbixClient) GetHost(id string) (*Host, error) {
+func (c *ZabbixClient) GetHost(ctx context.Context, id string) (*Host, error) {
 	params := map[string]interface{}{
-		"hostids":          []string{id},
-		"output":           []string{"hostid", "host"},
-		"selectGroups":     []string{"groupid"},
+		"hostids":               []string{id},
+		"output":                []string{"hostid", "host"},
+		"selectGroups":          []string{"groupid"},
 		"selectParentTemplates": []string{"templateid"},
-		"selectInterfaces": []string{"interfaceid", "ip", "port"},
+		"selectInterfaces":      []string{"interfaceid", "type", "main", "useip", "ip", "dns", "port"},
 	}
 
 	var res []Host
-	err := c.Call("host.get", params, &res)
+	err := c.Call(ctx, "host.get", params, &res)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(res) == 0 {
-		return nil, fmt.Errorf("host %s not found", id)
+		return nil, ErrNotFound
 	}
 
 	return &res[0], nil
 }
 
-func (c *ZabbixClient) UpdateHost(id string, name string, groupIds []string, templateIds []string, ip, port string) error {
+func (c *ZabbixClient) UpdateHost(ctx context.Context, id string, name string, groupIds []string, templateIds []string, templatesClearIds []string) error {
 	groups := make([]HostGroupRef, len(groupIds))
 	for i, gid := range groupIds {
 		groups[i] = HostGroupRef{GroupID: gid}
@@ -351,56 +460,62 @@ func (c *ZabbixClient) UpdateHost(id string, name string, groupIds []string, tem
 		templates[i] = TemplateRef{TemplateID: tid}
 	}
 
-	// In Zabbix, updating interfaces is tricky. Usually we want to update the main agent interface.
-	// First we fetch the existing host's interfaces to get the interface ID.
-	existing, err := c.GetHost(id)
-	if err != nil {
-		return err
-	}
-
-	interfaces := []HostInterface{
-		{
-			Type:  "1",
-			Main:  "1",
-			UseIP: "1",
-			IP:    ip,
-			DNS:   "",
-			Port:  port,
-		},
-	}
-
-	// Reuse existing interfaceid if possible
-	if len(existing.Interfaces) > 0 {
-		interfaces[0].InterfaceID = existing.Interfaces[0].InterfaceID
-	}
-
 	params := map[string]interface{}{
-		"hostid":     id,
-		"host":       name,
-		"groups":     groups,
-		"interfaces": interfaces,
+		"hostid": id,
+		"host":   name,
+		"groups": groups,
 	}
 
 	if len(templates) > 0 {
 		params["templates"] = templates
 	} else {
-		// Clear templates by sending empty array if none defined
 		params["templates"] = []TemplateRef{}
 	}
 
+	if len(templatesClearIds) > 0 {
+		clear := make([]TemplateRef, len(templatesClearIds))
+		for i, cid := range templatesClearIds {
+			clear[i] = TemplateRef{TemplateID: cid}
+		}
+		params["templates_clear"] = clear
+	}
+
 	var res map[string][]string
-	return c.Call("host.update", params, &res)
+	return c.Call(ctx, "host.update", params, &res)
 }
 
-func (c *ZabbixClient) DeleteHost(id string) error {
+func (c *ZabbixClient) GetHostInterface(ctx context.Context, hostID string) (*HostInterface, error) {
+	params := map[string]interface{}{
+		"hostids": []string{hostID},
+		"output":   []string{"interfaceid", "type", "main", "useip", "ip", "dns", "port"},
+	}
+	var res []HostInterface
+	err := c.Call(ctx, "hostinterface.get", params, &res)
+	if err != nil {
+		return nil, err
+	}
+	for _, inter := range res {
+		if inter.Type == "1" && inter.Main == "1" {
+			return &inter, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (c *ZabbixClient) UpdateHostInterface(ctx context.Context, inter *HostInterface) error {
+	var res map[string][]string
+	return c.Call(ctx, "hostinterface.update", inter, &res)
+}
+
+func (c *ZabbixClient) DeleteHost(ctx context.Context, id string) error {
 	params := []string{id}
 	var res map[string][]string
-	return c.Call("host.delete", params, &res)
+	return c.Call(ctx, "host.delete", params, &res)
 }
 
-func (c *ZabbixClient) GetVersion() (string, error) {
+func (c *ZabbixClient) GetVersion(ctx context.Context) (string, error) {
 	var version string
-	err := c.Call("apiinfo.version", map[string]interface{}{}, &version)
+	err := c.Call(ctx, "apiinfo.version", map[string]interface{}{}, &version)
 	if err != nil {
 		return "", err
 	}
@@ -409,7 +524,7 @@ func (c *ZabbixClient) GetVersion() (string, error) {
 
 // --- MEDIA TYPE CRUD ---
 
-func (c *ZabbixClient) CreateMediaType(mediaType *MediaType) (string, error) {
+func (c *ZabbixClient) CreateMediaType(ctx context.Context, mediaType *MediaType) (string, error) {
 	params := map[string]interface{}{
 		"name":   mediaType.Name,
 		"type":   mediaType.Type,
@@ -442,7 +557,7 @@ func (c *ZabbixClient) CreateMediaType(mediaType *MediaType) (string, error) {
 	}
 
 	var res map[string][]string
-	err := c.Call("mediatype.create", params, &res)
+	err := c.Call(ctx, "mediatype.create", params, &res)
 	if err != nil {
 		return "", err
 	}
@@ -455,7 +570,7 @@ func (c *ZabbixClient) CreateMediaType(mediaType *MediaType) (string, error) {
 	return ids[0], nil
 }
 
-func (c *ZabbixClient) GetMediaType(id string) (*MediaType, error) {
+func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType, error) {
 	params := map[string]interface{}{
 		"mediatypeids":     []string{id},
 		"output":           []string{"mediatypeid", "name", "type", "status", "smtp_server", "smtp_helo", "smtp_email", "exec_path", "gsm_modem", "script", "timeout"},
@@ -463,19 +578,19 @@ func (c *ZabbixClient) GetMediaType(id string) (*MediaType, error) {
 	}
 
 	var res []MediaType
-	err := c.Call("mediatype.get", params, &res)
+	err := c.Call(ctx, "mediatype.get", params, &res)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(res) == 0 {
-		return nil, fmt.Errorf("media type %s not found", id)
+		return nil, ErrNotFound
 	}
 
 	return &res[0], nil
 }
 
-func (c *ZabbixClient) UpdateMediaType(mediaType *MediaType) error {
+func (c *ZabbixClient) UpdateMediaType(ctx context.Context, mediaType *MediaType) error {
 	params := map[string]interface{}{
 		"mediatypeid": mediaType.MediaTypeID,
 		"name":        mediaType.Name,
@@ -504,28 +619,25 @@ func (c *ZabbixClient) UpdateMediaType(mediaType *MediaType) error {
 	if mediaType.Timeout != "" {
 		params["timeout"] = mediaType.Timeout
 	}
-	// In Zabbix 6.4, updating webhook parameters overwrites them
 	if mediaType.Type == "4" {
 		params["parameters"] = mediaType.Parameters
 	} else {
-		// Non-webhooks should have empty/no parameters passed
 		params["parameters"] = []interface{}{}
 	}
 
 	var res map[string][]string
-	return c.Call("mediatype.update", params, &res)
+	return c.Call(ctx, "mediatype.update", params, &res)
 }
 
-func (c *ZabbixClient) DeleteMediaType(id string) error {
+func (c *ZabbixClient) DeleteMediaType(ctx context.Context, id string) error {
 	params := []string{id}
 	var res map[string][]string
-	return c.Call("mediatype.delete", params, &res)
+	return c.Call(ctx, "mediatype.delete", params, &res)
 }
 
 // --- ACTION CRUD ---
 
-func (c *ZabbixClient) CreateAction(action *Action) (string, error) {
-	// Build base parameters
+func (c *ZabbixClient) CreateAction(ctx context.Context, action *Action) (string, error) {
 	params := map[string]interface{}{
 		"name":        action.Name,
 		"eventsource": action.EventSource,
@@ -538,16 +650,12 @@ func (c *ZabbixClient) CreateAction(action *Action) (string, error) {
 		params["esc_period"] = action.EscPeriod
 	}
 
-	// Make sure operations is at least an empty array if empty
 	if len(action.Operations) == 0 {
 		params["operations"] = []interface{}{}
 	}
 
-	debugBytes, _ := json.Marshal(params)
-	fmt.Fprintf(os.Stderr, "[DEBUG ZABBIX] action.create params: %s\n", string(debugBytes))
-
 	var res map[string][]string
-	err := c.Call("action.create", params, &res)
+	err := c.Call(ctx, "action.create", params, &res)
 	if err != nil {
 		return "", err
 	}
@@ -560,7 +668,7 @@ func (c *ZabbixClient) CreateAction(action *Action) (string, error) {
 	return ids[0], nil
 }
 
-func (c *ZabbixClient) GetAction(id string) (*Action, error) {
+func (c *ZabbixClient) GetAction(ctx context.Context, id string) (*Action, error) {
 	params := map[string]interface{}{
 		"actionids":    []string{id},
 		"output":       []string{"actionid", "name", "eventsource", "status", "esc_period"},
@@ -569,19 +677,19 @@ func (c *ZabbixClient) GetAction(id string) (*Action, error) {
 	}
 
 	var res []Action
-	err := c.Call("action.get", params, &res)
+	err := c.Call(ctx, "action.get", params, &res)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(res) == 0 {
-		return nil, fmt.Errorf("action %s not found", id)
+		return nil, ErrNotFound
 	}
 
 	return &res[0], nil
 }
 
-func (c *ZabbixClient) UpdateAction(action *Action) error {
+func (c *ZabbixClient) UpdateAction(ctx context.Context, action *Action) error {
 	params := map[string]interface{}{
 		"actionid":    action.ActionID,
 		"name":        action.Name,
@@ -595,17 +703,16 @@ func (c *ZabbixClient) UpdateAction(action *Action) error {
 		params["esc_period"] = action.EscPeriod
 	}
 
-	// Make sure operations is at least an empty array if empty
 	if len(action.Operations) == 0 {
 		params["operations"] = []interface{}{}
 	}
 
 	var res map[string][]string
-	return c.Call("action.update", params, &res)
+	return c.Call(ctx, "action.update", params, &res)
 }
 
-func (c *ZabbixClient) DeleteAction(id string) error {
+func (c *ZabbixClient) DeleteAction(ctx context.Context, id string) error {
 	params := []string{id}
 	var res map[string][]string
-	return c.Call("action.delete", params, &res)
+	return c.Call(ctx, "action.delete", params, &res)
 }
