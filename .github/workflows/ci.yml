@@ -97,7 +97,10 @@ jobs:
         run: go test -count=1 -timeout 30m -run 'TestAcc' -v ./zabbix
       - name: Zabbix logs
         if: failure()
-        run: docker compose -f docker-compose.acc.yml logs --tail 200
+        run: |
+          docker compose -f docker-compose.acc.yml exec -T zabbix-db psql -U zabbix -c "select pid, state, wait_event_type, wait_event, now()-xact_start as xact_age, left(query,160) as query from pg_stat_activity where datname='zabbix' and xact_start is not null order by xact_start" || true
+          docker compose -f docker-compose.acc.yml logs --tail 300 zabbix-db
+          docker compose -f docker-compose.acc.yml logs --tail 100 zabbix-server
       - name: Stop Zabbix
         if: always()
         run: docker compose -f docker-compose.acc.yml down -v
