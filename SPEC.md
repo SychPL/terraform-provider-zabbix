@@ -61,7 +61,9 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C17 | P2 | Brak timeoutu na `http.Client` - deadline zawsze z ctx (timeouts zasobu; `configureTimeout` 2 min dla probe'ow providera), wiec `timeouts { create = "15m" }` dziala | `TestNewZabbixClient_NoImplicitTimeout`, `TestCall_ContextCancelled` | DONE |
 | C19 | P2 | Login single-flight dziala w tle na kontekscie odlaczonym od inicjatora (wlasny limit 60 s); kazdy wywolujacy, takze inicjator, czeka tylko do swojego deadline'u; nieudany login zapamietany 30 s dla tej samej generacji tokenu (spoznieni wywolujacy nie generuja kolejnych prob) | `TestCall_ReloginSurvivesInitiatorCancellation`, `TestCall_FailedLoginIsMemoisedForLateCallers` | DONE |
 | C20 | P3 | `ca_cert_file` dokladany do systemowej puli CA, nie zamiast niej; `isLoopback` przez `net.ParseIP().IsLoopback()` (bez prefiksu `127.` dla nazw DNS) | `TestNewZabbixClient_TLS`, `TestIsLoopback` | DONE |
-| C18 | P2 | Mutacja nigdy nie jest ponawiana po bledzie transportu (zerwane polaczenie = dokladnie 1 request); body odpowiedzi HTTP nie trafia do diagnostyki (test z echem tokenu) | `TestCall_MutationIsNeverRetriedOnTransportError`, `TestCall_HTTPErrorIsNotNotFound` | DONE |
+| C18 | P2 | Mutacja nigdy nie jest ponawiana po bledzie transportu (zerwane polaczenie = dokladnie 1 request, `req.GetBody = nil` wylacza tez transparentne retry net/http na reused connection); body odpowiedzi HTTP nie trafia do diagnostyki (test z echem tokenu) | `TestCall_MutationIsNeverRetriedOnTransportError`, `TestCall_HTTPErrorIsNotNotFound` | DONE |
+| C21 | P2 | Koperta JSON-RPC (wersja 2.0 + ID zadania) walidowana przed klasyfikacja bledu - sfalszowana odpowiedz nie moze wymusic re-loginu i ponowienia mutacji | `TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin`, `TestCall_MalformedSuccessResponse` | DONE |
+| C22 | P3 | URL bez query/fragmentu (sekrety w query nie trafiaja do diagnostyk); mnozenie czasu odporne na overflow | `TestProviderConfigure_AuthValidation`, `TestParseZabbixDuration` | DONE |
 
 Odrzucone z draftu: C6 (lazy login - `terraform validate` nie konfiguruje providera,
 wymaganie bylo sprzeczne z `GetVersion` w configure), `user.logout` (SDKv2 nie ma hooka
@@ -103,7 +105,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | M5 | P3 | Walidacja w planie: `type` w {0,1,2,4}; pola wymagane per typ; `parameter` tylko dla 4; `password` tylko z `smtp_authentication=1`; `timeout` 1-60s | `TestMediaTypeCustomizeDiff` | DONE |
 | M6 | P3 | Read ustawia tylko pola wlasciwe dla typu, reszta = defaulty (brak perpetual diff po zmianie typu) | `TestMediaTypeRead_TypeAwareReset` | DONE |
 | M7 | P2 | Update wysyla pola nieaktywnych typow wyczyszczone (zmiana typu nie zostawia np. `passwd` w Zabbixie - potwierdzone na API) | `TestMediaTypeParams_TypeAware`, `TestAccMediaType_scriptSmsTypeChange` | DONE |
-| M8 | P2 | Jawnie ustawione pola innego typu odrzucane w planie (inaczej bylyby cicho ignorowane); walidacja per pole, wartosci unknown traktowane jako ustawione | `TestMediaTypeCustomizeDiff` | DONE |
+| M8 | P2 | Jawnie ustawione pola innego typu odrzucane w planie (po raw config, wiec takze wartosc rowna defaultowi); walidacja per pole, wartosci unknown traktowane jako ustawione; `smtp_authentication = 1` wymaga `username` i `password` w planie | `TestMediaTypeCustomizeDiff` | DONE |
 | M9 | P1 | Script media type: `parameters` (sortorder/value) nigdy nie wysylane; Read odmawia zarzadzania skryptem z parametrami (inaczej rename kasowalby argumenty) | `TestMediaTypeParams_ScriptParametersUntouched`, `TestMediaTypeRead_RefusesScriptWithParameters` | DONE |
 | M10 | P3 | `timeout` webhooka: tylko 1-60s, makra odrzucane (API ich nie przyjmuje) | `TestMediaTypeCustomizeDiff` | DONE |
 | M12 | P1 | Zmiana typu na Script wysyla `parameters: []` (inaczej parametry webhooka zostawaly i Read odmawial zarzadzania) | `TestMediaTypeParams_ScriptParametersUntouched`, kroki webhook->script w `TestAccMediaType_scriptSmsTypeChange` | DONE |
@@ -124,7 +126,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | A9 | P2 | Read odmawia zarzadzania akcja z `eventsource != 0` lub `evaltype = 3` (custom formula bylaby cicho skasowana) | `TestActionRead_RefusesUnsupportedEventSourceAndEvaltype` | DONE |
 | A10 | P2 | `CustomizeDiff` (host, media type, action) pomija walidacje wartosci nieznanych w planie (referencje do innych zasobow) | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
 | A11 | P1 | Read odmawia zarzadzania operacja z `opconditions` (update nadpisuje operacje w calosci) ; komunikaty odmowy wskazuja `terraform state rm` | `TestActionRead_RefusesOperationConditions` | DONE |
-| A13 | P2 | `operation` wymagane (`MinItems: 1`, jak w Zabbixie); `esc_period` akcji 60s-1w (0 tylko w operacji); kolejnosc operacji = kolejnosc konfiguracji, test z 2 operacjami bez perpetual diff | `TestActionCustomizeDiff`, `TestAccAction_lifecycle` | DONE |
+| A13 | P2 | `operation` wymagane (`MinItems: 1`, jak w Zabbixie); `esc_period` akcji 60s-1w (0 tylko w operacji); kolejnosc operacji = kolejnosc konfiguracji, test z 2 operacjami bez perpetual diff; `conditiontype`/`operator` walidowane lista dozwolonych wartosci 6.4 | `TestActionCustomizeDiff`, `TestAccAction_lifecycle` | DONE |
 | A12 | P2 | Elementy setu `condition` z wartosciami unknown (marker SDK zamiast typu) nie powoduja paniki ani falszywych bledow w planie | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
 
 ### 3.6 Provider
@@ -148,7 +150,7 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 | T6 | P2 | CI: `govulncheck` (zaleznosci i Go podniesione - 0 znanych podatnosci), `terraform fmt -check examples/`, `goreleaser check` + `build --snapshot --single-target`; release wymaga tagu osiagalnego z `main` i environment `release` | `ci.yml`, `release.yml` | DONE |
 | T7 | P3 | `.goreleaser.yml`: usunieta niewspierana para darwin/arm, `archives.formats`, manifest Registry (`terraform-registry-manifest.json`) w release i w checksumie | `goreleaser check` w CI | DONE |
 | T8 | P3 | CI acceptance: czeka na start zabbix-server (locki DB przy pierwszym starcie blokowaly `host.create`), lekkie template'y w tescie hosta, zrzut logow przy failu, obrazy przypiete digestem | `ci.yml`, `docker-compose.acc.yml` | DONE |
-| T10 | P3 | CI: `terraform validate` wszystkich `examples/` i `example_deployment/` na zbudowanym providerze (dev override); usuniety hook `go mod tidy` z goreleasera (CI pilnuje czystosci) | `ci.yml` | DONE |
+| T10 | P3 | CI: `terraform validate` wszystkich `examples/` i `example_deployment/` na zbudowanym providerze (dev override); usuniety hook `go mod tidy` z goreleasera; docs drift lapie tez pliki nieznane gitowi; snapshot build wszystkich targetow | `ci.yml` | DONE |
 | T12 | P3 | Testy: domyslne timeouty 2 min asertowane dla 4 zasobow; `filter.conditions` zawsze tablica; sekret z URL nigdy w zadnej diagnostyce; `pause_suppressed`/`notify_if_canceled` = false round-trip w akceptacji | `TestResourceTimeoutsDefaults`, `TestActionParams_EventSourceOnlyOnCreate`, `TestProviderConfigure_AuthValidation`, `TestAccAction_lifecycle` | DONE |
 | T11 | P2 | CI acceptance: `ANALYZE` swiezej bazy przed testami - bez statystyk planera zapytania `templates_clear` trwaly minuty (potwierdzone `pg_stat_activity`), hosty testowe tworzone jako wylaczone | `ci.yml`, run 33327064286 zielony | DONE |
 | T9 | P2 | CI egzekwuje C7: blokujacy grep na `os.Stderr/Stdout`, `fmt.Fprint/Print`, `log.` w kodzie providera; `example_deployment/` w `terraform fmt -check` | `ci.yml` | DONE |
@@ -176,6 +178,16 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 - `hostinterface.update` i `host.update templates_clear` dzialaja zgodnie z docs.
 - Nieistniejacy obiekt w delete: `-32500 No permissions to referred object or it does not exist!`
 - Zly/wygasly token: `-32602 Session terminated, re-login, please.` (nieodroznialne).
+
+## 4a. Uwagi recenzentow odrzucone (z uzasadnieniem)
+
+- (Codex, r7) "Redagowac `message`/`data` bledow JSON-RPC w diagnostyce": tresc bledu API to
+  podstawowa diagnostyka providera (kazdy provider Terraform ja pokazuje); koperta odpowiedzi
+  jest walidowana (C21), a body HTTP nie-JSON-RPC nigdy nie trafia do bledow (C18).
+- (Codex, r5) "Wymusic HTTPS": warning przy nie-loopbackowym http (P1) zamiast twardej blokady -
+  swiadomy wybor, lokalne laby i test acceptance chodza po http.
+- (GLM, r7) "Wspoldzielona mapa schematu media type": jedna instancja providera na proces,
+  SDK nie mutuje schematu po InternalValidate; przebudowa per wywolanie bez zysku.
 
 ## 5. Ryzyka pozostale
 

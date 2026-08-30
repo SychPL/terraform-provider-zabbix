@@ -154,6 +154,10 @@ func parseZabbixDuration(s string) (int, error) {
 		return 0, fmt.Errorf("%q is out of range", s)
 	}
 	mult := map[string]int{"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+	const maxSeconds = 10 * 604800 // far above any value Zabbix accepts
+	if n > maxSeconds/mult[m[2]] {
+		return 0, fmt.Errorf("%q is out of range", s)
+	}
 	return n * mult[m[2]], nil
 }
 

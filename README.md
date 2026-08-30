@@ -74,8 +74,11 @@ Terraform state. Use an encrypted, access-controlled state backend.
   `hostinterface.update`; other interfaces (SNMP, IPMI, JMX) are never touched.
   Templates removed from `templates` are unlinked with `templates_clear`, which
   also removes their inherited items and triggers.
-- **`zabbix_media_type` only sends the attributes relevant for its `type`.**
-  Attributes of other types are validated at plan time and reset in state.
+- **`zabbix_media_type` owns all attributes of the object.** Attributes that do
+  not belong to the configured `type` are rejected at plan time, and changing
+  `type` deliberately resets the previous type's attributes in Zabbix
+  (including SMTP credentials and webhook parameters) so no stale secrets
+  linger.
 - **`zabbix_action`** supports trigger actions (`eventsource = 0`, ForceNew) with
   "send message" operations to user groups and/or users. `condition` is a set,
   so ordering does not produce diffs.

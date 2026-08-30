@@ -21,7 +21,9 @@
 
 - Read no longer removes a resource from state on transport errors, timeouts
   or expired sessions; only a confirmed "not found" does, and that is reported
-  as a warning in the plan output.
+  as a warning in the plan output. Requests are strictly single-shot (no
+  transparent retries) and the JSON-RPC envelope is validated before any
+  error handling.
 - `zabbix_host` updates no longer replace the whole interface collection
   (which deleted SNMP/IPMI/JMX interfaces); the main agent interface is updated
   with `hostinterface.update`, and recreated with `hostinterface.create` when

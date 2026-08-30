@@ -75,15 +75,17 @@ func resourceAction() *schema.Resource {
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"conditiontype": {
-							Type:        schema.TypeInt,
-							Required:    true,
-							Description: "Condition type, e.g. 0 - host group, 1 - host, 2 - trigger, 3 - trigger name, 4 - trigger severity, 13 - template, 25 - event tag, 26 - event tag value.",
+							Type:         schema.TypeInt,
+							Required:     true,
+							ValidateFunc: validation.IntInSlice([]int{0, 1, 2, 3, 4, 5, 6, 13, 15, 16, 25, 26}),
+							Description:  "Condition type: 0 - host group, 1 - host, 2 - trigger, 3 - trigger name, 4 - trigger severity, 5 - trigger dependency, 6 - time period, 13 - template, 15 - problem is suppressed, 16 - event acknowledged, 25 - event tag, 26 - event tag value.",
 						},
 						"operator": {
-							Type:        schema.TypeInt,
-							Optional:    true,
-							Default:     0,
-							Description: "Condition operator, e.g. 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain.",
+							Type:         schema.TypeInt,
+							Optional:     true,
+							Default:      0,
+							ValidateFunc: validation.IntInSlice([]int{0, 1, 2, 3, 4, 5, 6, 7, 10, 11}),
+							Description:  "Condition operator: 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain, 4 - in, 5 - >=, 6 - <=, 7 - not in, 10 - yes, 11 - no.",
 						},
 						"value": {
 							Type:        schema.TypeString,

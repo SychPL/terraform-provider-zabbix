@@ -432,6 +432,11 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 	if err != nil {
 		return fmt.Errorf("failed to build request: %w", err)
 	}
+	// net/http transparently replays requests with GetBody on a reused
+	// connection that dies before the response; a replayed create/update/delete
+	// would execute the mutation twice. Removing GetBody makes every request
+	// strictly single-shot.
+	req.GetBody = nil
 	req.Header.Set("Content-Type", "application/json-rpc")
 	req.Header.Set("User-Agent", "terraform-provider-zabbix/"+Version)
 	if token != "" {
@@ -458,13 +463,20 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 	if err := json.Unmarshal(respBytes, &rpcResp); err != nil {
 		return fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+	// The envelope is validated before the error is even classified: a
+	// response that is not JSON-RPC 2.0 with our request ID must not be able
+	// to steer the client (e.g. fake a session expiry to force a re-login and
+	// a retried mutation).
+	if rpcResp.Jsonrpc != "2.0" || rpcResp.ID != 1 {
+		return fmt.Errorf("malformed JSON-RPC response from %s for %s: unexpected envelope", c.url, method)
+	}
 	if rpcResp.Error != nil {
 		return rpcResp.Error
 	}
-	// A JSON-RPC 2.0 success response must carry a result. Anything else (an
-	// HTML login page, an empty body, a proxy stub) must not be mistaken for a
-	// successful mutation.
-	if rpcResp.Jsonrpc != "2.0" || len(rpcResp.Result) == 0 || string(rpcResp.Result) == "null" {
+	// A success response must carry a result. Anything else (an HTML login
+	// page, an empty body, a proxy stub) must not be mistaken for a successful
+	// mutation.
+	if len(rpcResp.Result) == 0 || string(rpcResp.Result) == "null" {
 		return fmt.Errorf("malformed JSON-RPC response from %s for %s: no result and no error", c.url, method)
 	}
 	if result != nil {

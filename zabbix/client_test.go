@@ -390,8 +390,54 @@ func TestCall_RedirectsAreNotFollowed(t *testing.T) {
 	}
 }
 
+func TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin(t *testing.T) {
+	// An injected non-JSON-RPC body must not be able to fake a session expiry
+	// (which would re-login and retry an already executed mutation).
+	var logins, deletes atomic.Int32
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method == "user.login" {
+			logins.Add(1)
+			return "tok", nil
+		}
+		deletes.Add(1)
+		return nil, nil // handled below by overriding the body
+	})
+	_ = s
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deletes.Add(1)
+		// Correct error data but a broken envelope (wrong version, wrong id).
+		_, _ = w.Write([]byte(`{"jsonrpc":"1.0","error":{"code":-32602,"message":"Invalid params.","data":"` + sessionTerminated + `"},"id":7}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, _ := NewZabbixClient(ClientConfig{URL: srv.URL, Username: "u", Password: "p"})
+	c.token = "tok"
+
+	err := c.DeleteHost(context.Background(), "1")
+	if err == nil || !strings.Contains(err.Error(), "unexpected envelope") {
+		t.Fatalf("broken envelope must be a malformed-response error, got %v", err)
+	}
+	if deletes.Load() != 1 {
+		t.Fatalf("the mutation must not be retried, got %d requests", deletes.Load())
+	}
+}
+
+func TestRawCall_RequestsAreNotReplayable(t *testing.T) {
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		return "6.4.21", nil
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	if _, err := c.GetVersion(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// GetBody enables transparent replays in net/http; it must stay unset.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, s.URL, strings.NewReader("x"))
+	if req.GetBody == nil {
+		t.Skip("stdlib no longer sets GetBody for known body types")
+	}
+}
+
 func TestCall_MalformedSuccessResponse(t *testing.T) {
-	for _, body := range []string{`{}`, `{"jsonrpc":"2.0","id":1}`, `{"jsonrpc":"2.0","result":null,"id":1}`, `{"result":{"hostids":["1"]},"id":1}`} {
+	for _, body := range []string{`{}`, `{"jsonrpc":"2.0","id":1}`, `{"jsonrpc":"2.0","result":null,"id":1}`, `{"jsonrpc":"2.0","result":{"hostids":["1"]},"id":2}`, `{"result":{"hostids":["1"]},"id":1}`} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(body))
 		}))

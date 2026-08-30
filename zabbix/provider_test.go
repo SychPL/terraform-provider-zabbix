@@ -68,6 +68,7 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"user+pass ok", map[string]interface{}{"url": s.URL, "username": "u", "password": "p"}, "", ""},
 		{"bad url", map[string]interface{}{"url": "ftp://x", "api_token": "t"}, "not a valid http(s) URL", ""},
 		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret-pw@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
+		{"query in url", map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php?sid=s3cret-pw", "api_token": "t"}, "query string", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
 	}
 	for _, tc := range cases {
@@ -312,6 +313,8 @@ func TestMediaTypeCustomizeDiff(t *testing.T) {
 		{"email missing smtp", map[string]interface{}{"name": "m", "type": 0}, "smtp_server is required"},
 		{"email ok", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e"}, ""},
 		{"email password without auth", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "password": "p"}, "smtp_authentication = 1"},
+		{"email auth without credentials", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "smtp_authentication": 1}, "username is required"},
+		{"email auth with credentials", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "smtp_authentication": 1, "username": "u", "password": "p"}, ""},
 		{"script missing exec_path", map[string]interface{}{"name": "m", "type": 1}, "exec_path is required"},
 		{"webhook missing script", map[string]interface{}{"name": "m", "type": 4}, "script is required"},
 		{"webhook bad timeout", map[string]interface{}{"name": "m", "type": 4, "script": "x", "timeout": "5m"}, "timeout must be between"},
@@ -415,7 +418,7 @@ func TestParseZabbixDuration(t *testing.T) {
 			t.Errorf("%q: want %d, got %d (%v)", in, want, got, err)
 		}
 	}
-	for _, bad := range []string{"", "1x", "abc", "-5", "1h30m", "99999999999999999999"} {
+	for _, bad := range []string{"", "1x", "abc", "-5", "1h30m", "99999999999999999999", "4611686018427387905m", "9999999999w"} {
 		if _, err := parseZabbixDuration(bad); err == nil {
 			t.Errorf("%q: want error", bad)
 		}

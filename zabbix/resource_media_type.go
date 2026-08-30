@@ -25,7 +25,7 @@ var mediaTypeSchema = resourceMediaTypeSchema()
 func resourceMediaType() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix media type (email, script, SMS or webhook). " +
-			"Only the attributes relevant for the selected `type` are sent to Zabbix.",
+			"Attributes of other types are rejected at plan time; changing `type` resets the previous type's attributes in Zabbix (including credentials).",
 		CreateContext: resourceMediaTypeCreate,
 		ReadContext:   resourceMediaTypeRead,
 		UpdateContext: resourceMediaTypeUpdate,
@@ -195,18 +195,24 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 	for _, f := range mediaTypeFields[t] {
 		allowed[f] = true
 	}
+	raw := d.GetRawConfig()
 	for _, fields := range mediaTypeFields {
 		for _, f := range fields {
 			if allowed[f] {
 				continue
 			}
-			set := !known(f)
-			if known(f) {
-				if f == "parameter" {
-					set = len(d.Get(f).([]interface{})) > 0
-				} else {
-					set = !reflect.DeepEqual(d.Get(f), mediaTypeSchema[f].Default)
-				}
+			var set bool
+			switch {
+			case !known(f):
+				set = true // a reference to another resource is an explicit configuration
+			case !raw.IsNull():
+				// Explicitly written in the configuration, even with the default value.
+				v := raw.GetAttr(f)
+				set = !v.IsNull() && !(v.Type().IsListType() && v.IsKnown() && v.LengthInt() == 0)
+			case f == "parameter":
+				set = len(d.Get(f).([]interface{})) > 0
+			default:
+				set = !reflect.DeepEqual(d.Get(f), mediaTypeSchema[f].Default)
 			}
 			if set {
 				return fmt.Errorf("%s is not supported for media type %d and would be ignored", f, t)
@@ -227,10 +233,17 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 				return err
 			}
 		}
-		if known("smtp_authentication") && d.Get("smtp_authentication").(int) == 0 {
+		switch {
+		case known("smtp_authentication") && d.Get("smtp_authentication").(int) == 0:
 			for _, f := range []string{"username", "password"} {
 				if known(f) && d.Get(f).(string) != "" {
 					return fmt.Errorf("username/password require smtp_authentication = 1")
+				}
+			}
+		case known("smtp_authentication"):
+			for _, f := range []string{"username", "password"} {
+				if err := require(f); err != nil {
+					return err
 				}
 			}
 		}

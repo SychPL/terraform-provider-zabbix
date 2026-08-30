@@ -104,6 +104,9 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	if u.User != nil {
 		return nil, diag.Errorf("url must not contain user information; use username/password or api_token instead")
 	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return nil, diag.Errorf("url must not contain a query string or fragment")
+	}
 	diags = append(diags, plainHTTPWarning(cfg.URL)...)
 
 	client, err := NewZabbixClient(cfg)

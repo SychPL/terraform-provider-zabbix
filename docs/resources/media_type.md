@@ -3,12 +3,12 @@
 page_title: "zabbix_media_type Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix media type (email, script, SMS or webhook). Only the attributes relevant for the selected type are sent to Zabbix.
+  Manages a Zabbix media type (email, script, SMS or webhook). Attributes of other types are rejected at plan time; changing type resets the previous type's attributes in Zabbix (including credentials).
 ---
 
 # zabbix_media_type (Resource)
 
-Manages a Zabbix media type (email, script, SMS or webhook). Only the attributes relevant for the selected `type` are sent to Zabbix.
+Manages a Zabbix media type (email, script, SMS or webhook). Attributes of other types are rejected at plan time; changing `type` resets the previous type's attributes in Zabbix (including credentials).
 
 ## Example Usage
 
