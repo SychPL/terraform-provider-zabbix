@@ -10,8 +10,10 @@ description: |-
 Manages Zabbix objects through the JSON-RPC API. Tested against Zabbix 6.4.
 
 Authenticate with an API token (`api_token`, recommended) or with `username` and
-`password`. All arguments can also be provided through `ZABBIX_*` environment
-variables. Sensitive values are masked in CLI output but stored in the Terraform
+`password` - the two methods are mutually exclusive. `tls_insecure` and
+`ca_cert_file` are mutually exclusive as well. All arguments can also be
+provided through `ZABBIX_*` environment variables (explicit configuration
+wins). Sensitive values are masked in CLI output but stored in the Terraform
 state.
 
 ## Example Usage
@@ -51,5 +53,5 @@ provider "zabbix" {
 - `api_token` (String, Sensitive) Zabbix API token (Administration -> API tokens). Alternative to `username`/`password`. Can also be set with `ZABBIX_API_TOKEN`.
 - `ca_cert_file` (String) Path to a PEM file with CA certificates used to verify the Zabbix server certificate. Can also be set with `ZABBIX_CA_CERT_FILE`.
 - `password` (String, Sensitive) Zabbix API password. Can also be set with `ZABBIX_PASSWORD`.
-- `tls_insecure` (Boolean) Skip TLS certificate verification. Only for testing. Can also be set with `ZABBIX_TLS_INSECURE`.
+- `tls_insecure` (Boolean) Skip TLS certificate verification. Only for testing. Conflicts with `ca_cert_file`. Can also be set with `ZABBIX_TLS_INSECURE`.
 - `username` (String) Zabbix API username. Required together with `password` unless `api_token` is set. Can also be set with `ZABBIX_USERNAME`.

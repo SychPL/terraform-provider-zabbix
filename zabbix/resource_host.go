@@ -66,10 +66,11 @@ func resourceHost() *schema.Resource {
 				Description: "Connect to the agent interface via `ip` (true) or `dns` (false).",
 			},
 			"ip": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "IP address of the main agent interface. Required when `use_ip` is true.",
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "",
+				ValidateFunc: validateIP,
+				Description:  "IP address of the main agent interface (or a user macro). Required when `use_ip` is true.",
 			},
 			"dns": {
 				Type:        schema.TypeString,

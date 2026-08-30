@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unit:
     name: Lint and unit tests
@@ -27,6 +31,8 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: go vet
         run: go vet ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
       - name: No payload or secret logging in provider code
         run: |
           if grep -rnE 'os\.Stderr|os\.Stdout|fmt\.Fprint|fmt\.Print|\blog\.' --include='*.go' --exclude='*_test.go' zabbix/ main.go; then

@@ -69,6 +69,7 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"bad url", map[string]interface{}{"url": "ftp://x", "api_token": "t"}, "not a valid http(s) URL", ""},
 		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret-pw@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
 		{"query in url", map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php?sid=s3cret-pw", "api_token": "t"}, "query string", ""},
+		{"tls_insecure with ca_cert_file", map[string]interface{}{"url": s.URL, "api_token": "t", "tls_insecure": true, "ca_cert_file": "ca.pem"}, "mutually exclusive", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
 	}
 	for _, tc := range cases {
@@ -159,6 +160,24 @@ func TestEnvBoolDefault(t *testing.T) {
 	if d.Get("tls_insecure").(bool) {
 		t.Error("tls_insecure = false in config must override ZABBIX_TLS_INSECURE=true")
 	}
+
+	// ca_cert_file alone must not conflict with the tls_insecure default, but
+	// an environment-driven tls_insecure must not bypass the conflict either.
+	t.Setenv("ZABBIX_TLS_INSECURE", "")
+	if diags := resourceValidate(t, map[string]interface{}{"url": "https://x", "api_token": "t", "ca_cert_file": "ca.pem"}); diags.HasError() {
+		t.Errorf("ca_cert_file alone must be accepted by validation: %v", diags)
+	}
+	t.Setenv("ZABBIX_TLS_INSECURE", "true")
+	d = schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": "https://x", "api_token": "t", "ca_cert_file": "ca.pem"})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "mutually exclusive") {
+		t.Errorf("ZABBIX_TLS_INSECURE=true with ca_cert_file must be rejected, got %v", diags)
+	}
+}
+
+func resourceValidate(t *testing.T, raw map[string]interface{}) diag.Diagnostics {
+	t.Helper()
+	return Provider().Validate(terraform.NewResourceConfigRaw(raw))
 }
 
 func contains(list []string, s string) bool {
@@ -288,6 +307,12 @@ func TestHostCustomizeDiff(t *testing.T) {
 	groups := []interface{}{"2"}
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "ip": "10.0.0.1"}); err != nil {
 		t.Errorf("valid ip host: %v", err)
+	}
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "ip": "192.0.2.o1"}); err == nil || !strings.Contains(err.Error(), "not a valid IP") {
+		t.Errorf("a malformed IP must fail at plan time, got %v", err)
+	}
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "ip": "{$HOST.IP}"}); err != nil {
+		t.Errorf("a user macro must be a valid ip: %v", err)
 	}
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups}); err == nil || !strings.Contains(err.Error(), "ip is required") {
 		t.Errorf("use_ip without ip must fail, got %v", err)

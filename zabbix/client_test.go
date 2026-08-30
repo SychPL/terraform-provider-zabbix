@@ -1,6 +1,7 @@
 package zabbix
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -422,16 +423,22 @@ func TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin(t *testing.T) {
 }
 
 func TestRawCall_RequestsAreNotReplayable(t *testing.T) {
-	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
-		return "6.4.21", nil
-	})
-	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
-	if _, err := c.GetVersion(context.Background()); err != nil {
+	// The exact request constructor used by rawCall must produce requests that
+	// net/http can never transparently replay.
+	req, err := newSingleShotRequest(context.Background(), "http://example.test/api", []byte(`{"x":1}`), "tok")
+	if err != nil {
 		t.Fatal(err)
 	}
-	// GetBody enables transparent replays in net/http; it must stay unset.
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, s.URL, strings.NewReader("x"))
-	if req.GetBody == nil {
+	if req.GetBody != nil {
+		t.Fatal("GetBody must be nil, otherwise net/http may replay a mutation on a dying reused connection")
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer tok" {
+		t.Fatalf("unexpected auth header %q", got)
+	}
+	// Sanity: the stdlib does set GetBody for a bytes.Reader by default, so the
+	// constructor really removes something.
+	plain, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://example.test", bytes.NewReader([]byte("x")))
+	if plain.GetBody == nil {
 		t.Skip("stdlib no longer sets GetBody for known body types")
 	}
 }
@@ -521,8 +528,8 @@ func TestNewZabbixClient_TLS(t *testing.T) {
 		t.Error("ca_cert_file must set RootCAs")
 	}
 	// The custom CA is added to the system pool, not used instead of it.
-	if sys, err := x509.SystemCertPool(); err == nil && sys != nil && len(sys.Subjects()) > 0 && c.TLSConfig().RootCAs.Equal(x509.NewCertPool()) { //nolint:staticcheck
-		t.Error("RootCAs must extend the system pool")
+	if sys, err := x509.SystemCertPool(); err == nil && sys != nil && c.TLSConfig().RootCAs.Equal(x509.NewCertPool()) {
+		t.Error("RootCAs must extend the system pool, not be empty")
 	}
 	if _, err := c.GetVersion(context.Background()); err != nil {
 		t.Errorf("request with custom CA failed: %v", err)

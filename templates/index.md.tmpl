@@ -10,8 +10,10 @@ description: |-
 Manages Zabbix objects through the JSON-RPC API. Tested against Zabbix 6.4.
 
 Authenticate with an API token (`api_token`, recommended) or with `username` and
-`password`. All arguments can also be provided through `ZABBIX_*` environment
-variables. Sensitive values are masked in CLI output but stored in the Terraform
+`password` - the two methods are mutually exclusive. `tls_insecure` and
+`ca_cert_file` are mutually exclusive as well. All arguments can also be
+provided through `ZABBIX_*` environment variables (explicit configuration
+wins). Sensitive values are masked in CLI output but stored in the Terraform
 state.
 
 ## Example Usage

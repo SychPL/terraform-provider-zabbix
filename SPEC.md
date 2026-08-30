@@ -64,6 +64,8 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C18 | P2 | Mutacja nigdy nie jest ponawiana po bledzie transportu (zerwane polaczenie = dokladnie 1 request, `req.GetBody = nil` wylacza tez transparentne retry net/http na reused connection); body odpowiedzi HTTP nie trafia do diagnostyki (test z echem tokenu) | `TestCall_MutationIsNeverRetriedOnTransportError`, `TestCall_HTTPErrorIsNotNotFound` | DONE |
 | C21 | P2 | Koperta JSON-RPC (wersja 2.0 + ID zadania) walidowana przed klasyfikacja bledu - sfalszowana odpowiedz nie moze wymusic re-loginu i ponowienia mutacji | `TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin`, `TestCall_MalformedSuccessResponse` | DONE |
 | C22 | P3 | URL bez query/fragmentu (sekrety w query nie trafiaja do diagnostyk); mnozenie czasu odporne na overflow | `TestProviderConfigure_AuthValidation`, `TestParseZabbixDuration` | DONE |
+| C23 | P2 | Konflikt `tls_insecure`/`ca_cert_file` sprawdzany po rozwiazaniu defaultow ze srodowiska (nie `ConflictsWith`): sam `ca_cert_file` w HCL dziala, a `ZABBIX_TLS_INSECURE=true` nie omija konfliktu | `TestProviderConfigure_AuthValidation`, `TestEnvBoolDefault` | DONE |
+| C24 | P3 | Konstruktor zadan `newSingleShotRequest` wydzielony i asertowany wprost (`GetBody == nil`) | `TestRawCall_RequestsAreNotReplayable` | DONE |
 
 Odrzucone z draftu: C6 (lazy login - `terraform validate` nie konfiguruje providera,
 wymaganie bylo sprzeczne z `GetVersion` w configure), `user.logout` (SDKv2 nie ma hooka
@@ -91,6 +93,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | H3 | P2 | `name` (Computed, default = `host`), `enabled`, `description`; `groups` `MinItems: 1`; `port` walidowany (1-65535 lub makro) | `TestHostCustomizeDiff`, `TestAccHost_lifecycle` | DONE |
 | H4 | P3 | Odlaczenie template przez `templates_clear` (roznica stare - nowe), drugi template zostaje | krok 2 `TestAccHost_lifecycle` (2 -> 1 template) | DONE |
 | H6 | P2 | `name` niekonfigurowane = zawsze rowne `host`; normalizacja w `CustomizeDiff` (`SetNew`), wiec zmiana nazwy widocznej poza TF pokazuje sie w planie | `TestHostCustomizeDiff_NameFollowsHostUnlessConfigured`, krok DNS `TestAccHost_lifecycle` | DONE |
+| H8 | P3 | `ip` walidowane w planie (`net.ParseIP` lub makro uzytkownika) | `TestHostCustomizeDiff` | DONE |
 | H7 | P2 | `templates_clear` liczone z aktualnego stanu API (template podpiety poza TF jest czyszczony, nie tylko odlaczany) | `TestHostUpdate_TemplatesClearFromAPIState` | DONE |
 | H5 | P2 | Host bez interfejsu agenta (zaimportowany SNMP-only lub interfejs usuniety poza TF): Read pokazuje drift (puste `ip`/`dns`), a Update tworzy interfejs agenta z konfiguracji (`hostinterface.create`); interfejs SNMP nietkniety | `TestHostRead_NoAgentInterfaceShowsDrift`, `TestHostUpdate_NoAgentInterface`, `TestHostCustomizeDiff_ImportedHostWithoutAgentInterface` | DONE |
 
@@ -109,7 +112,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | M9 | P1 | Script media type: `parameters` (sortorder/value) nigdy nie wysylane; Read odmawia zarzadzania skryptem z parametrami (inaczej rename kasowalby argumenty) | `TestMediaTypeParams_ScriptParametersUntouched`, `TestMediaTypeRead_RefusesScriptWithParameters` | DONE |
 | M10 | P3 | `timeout` webhooka: tylko 1-60s, makra odrzucane (API ich nie przyjmuje) | `TestMediaTypeCustomizeDiff` | DONE |
 | M12 | P1 | Zmiana typu na Script wysyla `parameters: []` (inaczej parametry webhooka zostawaly i Read odmawial zarzadzania) | `TestMediaTypeParams_ScriptParametersUntouched`, kroki webhook->script w `TestAccMediaType_scriptSmsTypeChange` | DONE |
-| M11 | P3 | Read odmawia zarzadzania media type o nieobslugiwanym `type` (np. 3); nienumeryczne pola API = diag z zachowaniem ID | `TestMediaTypeRead_RefusesUnsupportedType`, `TestMediaTypeRead_NonNumericFieldIsAnError` | DONE |
+| M11 | P3 | Read: najpierw walidacja `type` (nieobslugiwany = odmowa z hintem), potem parsowanie WYLACZNIE pol wlasciwych dla typu; puste wartosci pol obcych tolerowane (obiekty spoza providera), nieparsowalne pole wlasnego typu = odmowa z hintem `terraform state rm` | `TestMediaTypeRead_RefusesUnsupportedType`, `TestMediaTypeRead_ForeignNumericFieldsAreTolerated`, `TestMediaTypeRead_OwnNonNumericFieldRefusedWithHint` | DONE |
 
 ### 3.5 `zabbix_action`
 
@@ -151,6 +154,8 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 | T7 | P3 | `.goreleaser.yml`: usunieta niewspierana para darwin/arm, `archives.formats`, manifest Registry (`terraform-registry-manifest.json`) w release i w checksumie | `goreleaser check` w CI | DONE |
 | T8 | P3 | CI acceptance: czeka na start zabbix-server (locki DB przy pierwszym starcie blokowaly `host.create`), lekkie template'y w tescie hosta, zrzut logow przy failu, obrazy przypiete digestem | `ci.yml`, `docker-compose.acc.yml` | DONE |
 | T10 | P3 | CI: `terraform validate` wszystkich `examples/` i `example_deployment/` na zbudowanym providerze (dev override); usuniety hook `go mod tidy` z goreleasera; docs drift lapie tez pliki nieznane gitowi; snapshot build wszystkich targetow | `ci.yml` | DONE |
+| T13 | P2 | Testy jednostkowe CRUD na poziomie zasobow (nie tylko klienta): host_group create/update/delete, action update z czyszczeniem odbiorcow, media type delete idempotentny | `TestHostGroupResource_CRUD`, `TestActionResource_UpdateSendsClearedRecipients`, `TestMediaTypeResource_DeleteIdempotent` | DONE |
+| T14 | P3 | CI: `staticcheck` (pinowany), `concurrency` z `cancel-in-progress`; template docs opisuje wykluczajace sie atrybuty (tfplugindocs ich nie renderuje) | `ci.yml`, `templates/index.md.tmpl` | DONE |
 | T12 | P3 | Testy: domyslne timeouty 2 min asertowane dla 4 zasobow; `filter.conditions` zawsze tablica; sekret z URL nigdy w zadnej diagnostyce; `pause_suppressed`/`notify_if_canceled` = false round-trip w akceptacji | `TestResourceTimeoutsDefaults`, `TestActionParams_EventSourceOnlyOnCreate`, `TestProviderConfigure_AuthValidation`, `TestAccAction_lifecycle` | DONE |
 | T11 | P2 | CI acceptance: `ANALYZE` swiezej bazy przed testami - bez statystyk planera zapytania `templates_clear` trwaly minuty (potwierdzone `pg_stat_activity`), hosty testowe tworzone jako wylaczone | `ci.yml`, run 33327064286 zielony | DONE |
 | T9 | P2 | CI egzekwuje C7: blokujacy grep na `os.Stderr/Stdout`, `fmt.Fprint/Print`, `log.` w kodzie providera; `example_deployment/` w `terraform fmt -check` | `ci.yml` | DONE |

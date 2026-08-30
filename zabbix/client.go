@@ -428,19 +428,9 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(reqBytes))
+	req, err := newSingleShotRequest(ctx, c.url, reqBytes, token)
 	if err != nil {
 		return fmt.Errorf("failed to build request: %w", err)
-	}
-	// net/http transparently replays requests with GetBody on a reused
-	// connection that dies before the response; a replayed create/update/delete
-	// would execute the mutation twice. Removing GetBody makes every request
-	// strictly single-shot.
-	req.GetBody = nil
-	req.Header.Set("Content-Type", "application/json-rpc")
-	req.Header.Set("User-Agent", "terraform-provider-zabbix/"+Version)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -501,6 +491,23 @@ func (c *ZabbixClient) GetVersion(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return version, nil
+}
+
+// newSingleShotRequest builds a request that net/http can never transparently
+// replay: GetBody is removed, because a replayed create/update/delete on a
+// dying reused connection would execute the mutation twice.
+func newSingleShotRequest(ctx context.Context, url string, body []byte, token string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.GetBody = nil
+	req.Header.Set("Content-Type", "application/json-rpc")
+	req.Header.Set("User-Agent", "terraform-provider-zabbix/"+Version)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req, nil
 }
 
 func firstID(res map[string][]string, key string) (string, error) {

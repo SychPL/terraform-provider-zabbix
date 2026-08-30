@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"time"
@@ -180,6 +181,15 @@ func validateOperationEscPeriod(v interface{}, k string) ([]string, []error) {
 		return nil, nil
 	}
 	return validateEscPeriod(v, k)
+}
+
+// validateIP accepts an empty value, an IP address or a user macro.
+func validateIP(v interface{}, k string) ([]string, []error) {
+	s := v.(string)
+	if s == "" || userMacroRe.MatchString(s) || net.ParseIP(s) != nil {
+		return nil, nil
+	}
+	return nil, []error{fmt.Errorf("%s: %q is not a valid IP address or user macro", k, s)}
 }
 
 // validatePort accepts a port number 1-65535 or a user macro.

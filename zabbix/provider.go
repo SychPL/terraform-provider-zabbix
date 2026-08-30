@@ -55,11 +55,10 @@ func Provider() *schema.Provider {
 				Description: "Zabbix API token (Administration -> API tokens). Alternative to `username`/`password`. Can also be set with `ZABBIX_API_TOKEN`.",
 			},
 			"tls_insecure": {
-				Type:          schema.TypeBool,
-				Optional:      true,
-				DefaultFunc:   envBoolDefault("ZABBIX_TLS_INSECURE"),
-				ConflictsWith: []string{"ca_cert_file"},
-				Description:   "Skip TLS certificate verification. Only for testing. Can also be set with `ZABBIX_TLS_INSECURE`.",
+				Type:        schema.TypeBool,
+				Optional:    true,
+				DefaultFunc: envBoolDefault("ZABBIX_TLS_INSECURE"),
+				Description: "Skip TLS certificate verification. Only for testing. Conflicts with `ca_cert_file`. Can also be set with `ZABBIX_TLS_INSECURE`.",
 			},
 			"ca_cert_file": {
 				Type:        schema.TypeString,
@@ -95,6 +94,12 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	}
 	if cfg.APIToken != "" && cfg.Username != "" {
 		return nil, diag.Errorf("api_token and username/password are mutually exclusive")
+	}
+	// Checked here, not with ConflictsWith: both attributes have environment
+	// defaults, and a default must neither trigger a false conflict nor let
+	// tls_insecure silently disable the verification a CA file asks for.
+	if cfg.Insecure && cfg.CACertFile != "" {
+		return nil, diag.Errorf("tls_insecure and ca_cert_file are mutually exclusive")
 	}
 
 	u, err := url.Parse(cfg.URL)

@@ -315,22 +315,33 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 		return readError(ctx, d, "media type", err)
 	}
 
-	ints := map[string]int{}
-	for field, raw := range map[string]string{
-		"type": mt.Type, "smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication,
-	} {
-		n, err := atoi(field, raw)
-		if err != nil {
-			return diag.FromErr(err)
-		}
-		ints[field] = n
+	// The type decides everything else, so it is validated first; numeric
+	// fields are parsed only for the type they belong to, tolerating empty
+	// values (objects created outside the provider).
+	mtType, err := atoi("type", mt.Type)
+	if err != nil {
+		return diag.Errorf("media type %s: %s; %s", d.Id(), err, unmanageableHint)
 	}
-
-	if _, ok := mediaTypeFields[ints["type"]]; !ok {
-		return diag.Errorf("media type %s has type %d which this provider does not support; %s", d.Id(), ints["type"], unmanageableHint)
+	if _, ok := mediaTypeFields[mtType]; !ok {
+		return diag.Errorf("media type %s has type %d which this provider does not support; %s", d.Id(), mtType, unmanageableHint)
 	}
-	if ints["type"] == mediaTypeScript && len(mt.Parameters) > 0 {
+	if mtType == mediaTypeScript && len(mt.Parameters) > 0 {
 		return diag.Errorf("media type %s is a script media type with parameters, which this provider does not support; %s", d.Id(), unmanageableHint)
+	}
+	ints := map[string]int{"type": mtType, "smtp_port": 25, "smtp_security": 0, "smtp_authentication": 0}
+	if mtType == mediaTypeEmail {
+		for field, raw := range map[string]string{
+			"smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication,
+		} {
+			if raw == "" {
+				continue // keep the schema default
+			}
+			n, err := atoi(field, raw)
+			if err != nil {
+				return diag.Errorf("media type %s: %s; %s", d.Id(), err, unmanageableHint)
+			}
+			ints[field] = n
+		}
 	}
 	params := make([]map[string]interface{}, len(mt.Parameters))
 	for i, p := range mt.Parameters {

@@ -41,7 +41,8 @@
 ### Added
 
 - `api_token` authentication (Bearer header, validated at provider configure),
-  `tls_insecure`, `ca_cert_file` (added to the system trust store). HTTP redirects are never followed and
+  `tls_insecure`, `ca_cert_file` (added to the system trust store; mutually
+  exclusive with `tls_insecure`, also when set through the environment). HTTP redirects are never followed and
   malformed JSON-RPC responses are never treated as success; URLs with embedded
   credentials are rejected.
 - Automatic single re-login when a username/password session expires; all
