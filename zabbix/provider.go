@@ -199,7 +199,8 @@ func attrWrittenInConfig(d *schema.ResourceData, attr, envVar string) bool {
 }
 
 func writtenInRaw(raw cty.Value, attr string) bool {
-	return !raw.GetAttr(attr).IsNull()
+	// Harness raw configs may be partial objects; a real core sends them full.
+	return raw.Type().HasAttribute(attr) && !raw.GetAttr(attr).IsNull()
 }
 
 func isLoopback(host string) bool {

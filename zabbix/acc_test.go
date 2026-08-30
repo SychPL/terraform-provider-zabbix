@@ -749,19 +749,39 @@ func TestAccProvider_APIToken(t *testing.T) {
 		t.Fatalf("token.generate: %v", err)
 	}
 
-	name := acctest.RandomWithPrefix("tfacc-token-group")
-	cfg := testAccProviderConfig() + fmt.Sprintf(`resource "zabbix_host_group" "g" { name = %q }`, name)
+	name := acctest.RandomWithPrefix("tfacc-token")
+	cfg := func(group, mtName string) string {
+		return testAccProviderConfig() + fmt.Sprintf(`
+resource "zabbix_host_group" "g" { name = %q }
+
+resource "zabbix_media_type" "wh" {
+  name   = %q
+  type   = 4
+  script = "return 'OK';"
+}`, group, mtName)
+	}
 
 	// Authenticate with the token only; username/password must not leak in.
+	// A full lifecycle (create, update, import, destroy) runs on the Bearer
+	// path, not just a single create.
 	t.Setenv("ZABBIX_API_TOKEN", generated[0]["token"])
 	t.Setenv("ZABBIX_USERNAME", "")
 	t.Setenv("ZABBIX_PASSWORD", "")
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
-		CheckDestroy:      testAccCheckGone(t, "zabbix_host_group.g", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
+		CheckDestroy:      testAccCheckGone(t, "zabbix_media_type.wh", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
 		Steps: []resource.TestStep{
-			{Config: cfg, Check: resource.TestCheckResourceAttr("zabbix_host_group.g", "name", name)},
+			{Config: cfg(name+"-grp", name+"-wh"), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_host_group.g", "name", name+"-grp"),
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "name", name+"-wh"),
+			)},
+			{Config: cfg(name+"-grp2", name+"-wh2"), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_host_group.g", "name", name+"-grp2"),
+				resource.TestCheckResourceAttr("zabbix_media_type.wh", "name", name+"-wh2"),
+			)},
+			{ResourceName: "zabbix_media_type.wh", ImportState: true, ImportStateVerify: true},
+			{ResourceName: "zabbix_host_group.g", ImportState: true, ImportStateVerify: true},
 		},
 	})
 }

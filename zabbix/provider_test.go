@@ -404,6 +404,10 @@ func TestWrittenInRaw(t *testing.T) {
 	if !writtenInRaw(raw, "api_token") || writtenInRaw(raw, "username") {
 		t.Error("raw config must distinguish written attributes from env-injected defaults")
 	}
+	partial := cty.ObjectVal(map[string]cty.Value{"api_token": cty.StringVal("t")})
+	if writtenInRaw(partial, "username") {
+		t.Error("a missing attribute in a partial raw config must read as not written, not panic")
+	}
 }
 
 func contains(list []string, s string) bool {

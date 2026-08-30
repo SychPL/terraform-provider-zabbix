@@ -94,6 +94,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: go vet
+        run: go vet ./...
       - name: Unit tests
         # goreleaser ships windows binaries; catch Windows-specific regressions
         # (paths, CRLF, TLS store). -race needs cgo and already runs on Linux.

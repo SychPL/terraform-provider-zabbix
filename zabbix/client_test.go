@@ -176,13 +176,37 @@ func TestCall_BearerHeaderAndUnauthenticatedVersion(t *testing.T) {
 	}
 }
 
+// timedBarrier releases every caller once n arrived, or fails the test after
+// a timeout: a regression reducing the number of requests must produce a
+// readable error instead of hanging CI.
+type timedBarrier struct {
+	t  *testing.T
+	ch chan struct{}
+	n  int32
+	c  atomic.Int32
+}
+
+func newTimedBarrier(t *testing.T, n int) *timedBarrier {
+	return &timedBarrier{t: t, ch: make(chan struct{}), n: int32(n)}
+}
+
+func (b *timedBarrier) arrive() {
+	if b.c.Add(1) == b.n {
+		close(b.ch)
+	}
+	select {
+	case <-b.ch:
+	case <-time.After(10 * time.Second):
+		b.t.Error("barrier timed out: not all expected requests arrived")
+	}
+}
+
 func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
 	const parallel = 5
 	var logins atomic.Int32
 	// Barrier: every parallel call must see the expired session before any of
 	// them gets the error, so that they all race for the re-login.
-	var barrier sync.WaitGroup
-	barrier.Add(parallel)
+	barrier := newTimedBarrier(t, parallel)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "user.login":
@@ -190,8 +214,7 @@ func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
 			return map[int32]string{1: "tok1", 2: "tok2"}[n], nil
 		case "hostgroup.get":
 			if req.Auth != "Bearer tok2" {
-				barrier.Done()
-				barrier.Wait()
+				barrier.arrive()
 				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
 			}
 			return []HostGroup{{GroupID: "1", Name: "g"}}, nil
@@ -229,8 +252,7 @@ func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
 func TestCall_FailedReloginIsSharedByWaiters(t *testing.T) {
 	const parallel = 5
 	var logins atomic.Int32
-	var barrier sync.WaitGroup
-	barrier.Add(parallel)
+	barrier := newTimedBarrier(t, parallel)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "user.login":
@@ -239,8 +261,7 @@ func TestCall_FailedReloginIsSharedByWaiters(t *testing.T) {
 			}
 			return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: "Incorrect user name or password or account is temporarily blocked."}
 		default:
-			barrier.Done()
-			barrier.Wait()
+			barrier.arrive()
 			return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
 		}
 	})
@@ -810,9 +831,13 @@ func TestCall_MutationRetriedExactlyOnceAfterRelogin(t *testing.T) {
 			return "tok2", nil
 		case "hostgroup.delete":
 			if deletes.Add(1) == 1 {
+				if req.Auth != "Bearer tok1" {
+					t.Errorf("the first mutation must carry the current session, got %q", req.Auth)
+				}
 				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
 			}
 			if req.Auth != "Bearer tok2" {
+				t.Errorf("the retried mutation must carry the re-login session, got %q", req.Auth)
 				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
 			}
 			return map[string][]string{"groupids": {"1"}}, nil

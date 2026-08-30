@@ -103,7 +103,7 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 	// normalising it here makes drift of a non-configured name visible in the plan.
 	if planKnown(d, "host", "name") {
 		raw := d.GetRawConfig()
-		if d.Get("name").(string) == "" || (!raw.IsNull() && raw.GetAttr("name").IsNull()) {
+		if d.Get("name").(string) == "" || (!raw.IsNull() && raw.Type().HasAttribute("name") && raw.GetAttr("name").IsNull()) {
 			if err := d.SetNew("name", d.Get("host").(string)); err != nil {
 				return err
 			}
@@ -294,8 +294,20 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 		case !spec.HasAddress() && iface == nil:
 			// nothing to do
 		case !spec.HasAddress():
-			// The interface was removed from the configuration.
-			if err := client.DeleteHostInterface(ctx, iface.InterfaceID); err != nil {
+			// The interface was removed from the configuration. A parallel
+			// automation may have deleted it between the preflight read and
+			// this call: confirm the absence instead of failing the apply.
+			err := deleteError(ctx, client.DeleteHostInterface(ctx, iface.InterfaceID), func(ctx context.Context) error {
+				h, err := client.GetHost(ctx, d.Id())
+				if err != nil {
+					return err
+				}
+				if h.AgentInterface() == nil {
+					return ErrNotFound
+				}
+				return nil
+			})
+			if err != nil {
 				return diag.Errorf("removing agent interface of host %s: %s", d.Id(), err)
 			}
 		case iface != nil:

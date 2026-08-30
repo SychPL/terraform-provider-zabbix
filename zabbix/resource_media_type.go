@@ -219,15 +219,18 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Elem: &schema.Resource{
 				Schema: map[string]*schema.Schema{
 					"name": {
-						Type:        schema.TypeString,
-						Required:    true,
-						Description: "Parameter name.",
+						Type:         schema.TypeString,
+						Required:     true,
+						ValidateFunc: validation.StringIsNotWhiteSpace,
+						Description:  "Parameter name.",
 					},
 					"value": {
+						// Deliberately not validated: an empty value is legal
+						// (e.g. explicitly blanking a parameter).
 						Type:        schema.TypeString,
 						Required:    true,
 						Sensitive:   true,
-						Description: "Parameter value (may contain macros).",
+						Description: "Parameter value (may contain macros; empty is allowed).",
 					},
 				},
 			},
@@ -268,7 +271,7 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 			switch {
 			case !known(f):
 				set = true // a reference to another resource is an explicit configuration
-			case !raw.IsNull():
+			case !raw.IsNull() && raw.Type().HasAttribute(f):
 				// Explicitly written in the configuration, even with the default value.
 				v := raw.GetAttr(f)
 				set = !v.IsNull() && !(v.Type().IsListType() && v.IsKnown() && v.LengthInt() == 0)

@@ -121,7 +121,7 @@ resource "zabbix_media_type" "email" {
 Required:
 
 - `name` (String) Parameter name.
-- `value` (String, Sensitive) Parameter value (may contain macros).
+- `value` (String, Sensitive) Parameter value (may contain macros; empty is allowed).
 
 
 <a id="nestedblock--timeouts"></a>

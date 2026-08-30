@@ -91,6 +91,10 @@
   when the rename was unknown at plan time.
 - Set elements (group, template, user and user-group IDs) and time-period
   condition values are validated at plan time.
+- Removing the managed agent interface is idempotent: a parallel deletion
+  between the preflight read and the delete no longer fails the apply.
+- Webhook parameter names are validated at plan time; raw-config reads are
+  guarded against partial objects.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 
