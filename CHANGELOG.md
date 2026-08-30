@@ -69,7 +69,9 @@
 - `zabbix_action`: `users` recipients, `condition.value2` (event tag value
   conditions), `pause_suppressed`, `notify_if_canceled`, validation of
   escalation steps, periods (60s-1w for the action, 0 allowed per operation)
-  and recipients; at least one `operation` is required, as in Zabbix. Actions containing operation types,
+  and recipients; at least one `operation` is required, as in Zabbix. The
+  condition type/operator matrix is validated at plan time against the values
+  Zabbix 6.4 actually accepts (verified empirically). Actions containing operation types,
   event sources, custom expressions or operation conditions the provider does
   not support are refused instead of silently rewritten (the error explains
   how to detach the resource with `terraform state rm`). Plan-time validation defers values that are

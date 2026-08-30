@@ -62,9 +62,10 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C19 | P2 | Login single-flight dziala w tle na kontekscie odlaczonym od inicjatora (wlasny limit 60 s); kazdy wywolujacy, takze inicjator, czeka tylko do swojego deadline'u; nieudany login zapamietany 30 s dla tej samej generacji tokenu (spoznieni wywolujacy nie generuja kolejnych prob) | `TestCall_ReloginSurvivesInitiatorCancellation`, `TestCall_FailedLoginIsMemoisedForLateCallers` | DONE |
 | C20 | P3 | `ca_cert_file` dokladany do systemowej puli CA, nie zamiast niej; `isLoopback` przez `net.ParseIP().IsLoopback()` (bez prefiksu `127.` dla nazw DNS) | `TestNewZabbixClient_TLS`, `TestIsLoopback` | DONE |
 | C18 | P2 | Mutacja nigdy nie jest ponawiana po bledzie transportu (zerwane polaczenie = dokladnie 1 request, `req.GetBody = nil` wylacza tez transparentne retry net/http na reused connection); body odpowiedzi HTTP nie trafia do diagnostyki (test z echem tokenu) | `TestCall_MutationIsNeverRetriedOnTransportError`, `TestCall_HTTPErrorIsNotNotFound` | DONE |
-| C21 | P2 | Koperta JSON-RPC (wersja 2.0 + ID zadania) walidowana przed klasyfikacja bledu - sfalszowana odpowiedz nie moze wymusic re-loginu i ponowienia mutacji | `TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin`, `TestCall_MalformedSuccessResponse` | DONE |
+| C21 | P2 | Koperta JSON-RPC (wersja 2.0 + ID zadania, dokladnie jedno z `result`/`error`) walidowana przed klasyfikacja bledu - sfalszowana odpowiedz nie moze wymusic re-loginu i ponowienia mutacji | `TestCall_ForgedErrorEnvelopeDoesNotTriggerRelogin`, `TestCall_MalformedSuccessResponse` | DONE |
 | C22 | P3 | URL bez query/fragmentu (sekrety w query nie trafiaja do diagnostyk); mnozenie czasu odporne na overflow | `TestProviderConfigure_AuthValidation`, `TestParseZabbixDuration` | DONE |
 | C23 | P2 | Konflikt `tls_insecure`/`ca_cert_file` sprawdzany po rozwiazaniu defaultow ze srodowiska (nie `ConflictsWith`): sam `ca_cert_file` w HCL dziala, a `ZABBIX_TLS_INSECURE=true` nie omija konfliktu | `TestProviderConfigure_AuthValidation`, `TestEnvBoolDefault` | DONE |
+| C25 | P3 | `api_token` w HCL wygrywa z ZABBIX_USERNAME/PASSWORD ze srodowiska (warning zamiast twardego bledu - typowe w CI) | `TestProviderConfigure_TokenWinsOverEnvCredentials` | DONE |
 | C24 | P3 | Konstruktor zadan `newSingleShotRequest` wydzielony i asertowany wprost (`GetBody == nil`) | `TestRawCall_RequestsAreNotReplayable` | DONE |
 
 Odrzucone z draftu: C6 (lazy login - `terraform validate` nie konfiguruje providera,
@@ -129,7 +130,8 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | A9 | P2 | Read odmawia zarzadzania akcja z `eventsource != 0` lub `evaltype = 3` (custom formula bylaby cicho skasowana) | `TestActionRead_RefusesUnsupportedEventSourceAndEvaltype` | DONE |
 | A10 | P2 | `CustomizeDiff` (host, media type, action) pomija walidacje wartosci nieznanych w planie (referencje do innych zasobow) | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
 | A11 | P1 | Read odmawia zarzadzania operacja z `opconditions` (update nadpisuje operacje w calosci) ; komunikaty odmowy wskazuja `terraform state rm` | `TestActionRead_RefusesOperationConditions` | DONE |
-| A13 | P2 | `operation` wymagane (`MinItems: 1`, jak w Zabbixie); `esc_period` akcji 60s-1w (0 tylko w operacji); kolejnosc operacji = kolejnosc konfiguracji, test z 2 operacjami bez perpetual diff; `conditiontype`/`operator` walidowane lista dozwolonych wartosci 6.4 | `TestActionCustomizeDiff`, `TestAccAction_lifecycle` | DONE |
+| A13 | P2 | `operation` wymagane (`MinItems: 1`, jak w Zabbixie); `esc_period` akcji 60s-1w (0 tylko w operacji); kolejnosc operacji = kolejnosc konfiguracji, test z 2 operacjami bez perpetual diff | `TestActionCustomizeDiff`, `TestAccAction_lifecycle` | DONE |
+| A14 | P1 | Macierz warunkow zgodna z 6.4 zweryfikowana empirycznie (`action.create` na 6.4.21): `conditiontype` w {0,1,2,3,4,6,13,25,26} (5/15/16 odrzucane przez API), operatory per typ (np. event name tylko contains/not-contains, severity =,!=,>=,<=, time period in/not-in); zle pary odrzucane w planie, a nieznane wartosci z importu = odmowa z hintem | `TestActionCustomizeDiff`, `TestActionRead_RefusesUnknownConditionOperator` | DONE |
 | A12 | P2 | Elementy setu `condition` z wartosciami unknown (marker SDK zamiast typu) nie powoduja paniki ani falszywych bledow w planie | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
 
 ### 3.6 Provider
@@ -167,6 +169,8 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 |---|---|---|---|---|
 | D1 | P2 | `docs/` przez `go generate` (tfplugindocs), `examples/` z `resource.tf` + `import.sh`; CI sprawdza drift | `docs/resources/*.md` x4 + `docs/index.md` | DONE |
 | D2 | P3 | README: 4 zasoby, `api_token`, TLS, zachowania (Read/interfejsy/templates_clear), sekcja o obiektach nieobslugiwanych (`terraform state rm`), akceptacja, override dla Windows, CHANGELOG | `README.md`, `CHANGELOG.md` | DONE |
+| D3 | P2 | Opisy zasobow (i wygenerowane docs) ostrzegaja o autorytatywnym zarzadzaniu przy imporcie (templates/filter/operacje/atrybuty typu trzeba odtworzyc w konfiguracji przed pierwszym apply); przyklady bez hardcodowanych ID instancji (zmienne) | `docs/resources/*.md`, `examples/` | DONE |
+| D4 | P3 | CI: `timeout-minutes` na jobach; marginesy czasowe testow logowania powiekszone (stabilnosc na wolnych runnerach) | `ci.yml`, `client_test.go` | DONE |
 
 ## 4. Fakty o API 6.4.21 ustalone empirycznie
 

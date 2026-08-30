@@ -93,7 +93,19 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		return nil, diag.Errorf("either api_token or both username and password must be configured (or the ZABBIX_API_TOKEN / ZABBIX_USERNAME / ZABBIX_PASSWORD environment variables)")
 	}
 	if cfg.APIToken != "" && cfg.Username != "" {
-		return nil, diag.Errorf("api_token and username/password are mutually exclusive")
+		// Common in CI: ZABBIX_USERNAME/PASSWORD exported globally while the
+		// configuration sets api_token. The token wins; a hard error would make
+		// the provider unusable until the environment is scrubbed.
+		if os.Getenv("ZABBIX_USERNAME") == cfg.Username {
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Warning,
+				Summary:  "Ignoring ZABBIX_USERNAME/ZABBIX_PASSWORD",
+				Detail:   "api_token is configured; the username/password from the environment are not used.",
+			})
+			cfg.Username, cfg.Password = "", ""
+		} else {
+			return nil, diag.Errorf("api_token and username/password are mutually exclusive")
+		}
 	}
 	// Checked here, not with ConflictsWith: both attributes have environment
 	// defaults, and a default must neither trigger a false conflict nor let

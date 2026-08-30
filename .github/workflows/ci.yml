@@ -17,6 +17,7 @@ jobs:
   unit:
     name: Lint and unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -78,6 +79,7 @@ jobs:
     name: Acceptance tests (Zabbix 6.4)
     runs-on: ubuntu-latest
     needs: unit
+    timeout-minutes: 45
     env:
       TF_ACC: "1"
       ZABBIX_URL: http://localhost:8082/api_jsonrpc.php

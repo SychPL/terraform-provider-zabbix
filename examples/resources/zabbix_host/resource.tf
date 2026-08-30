@@ -8,7 +8,7 @@ resource "zabbix_host" "web01" {
   name        = "Web server 01"
   description = "Managed by Terraform"
   groups      = [zabbix_host_group.servers.id]
-  templates   = ["10001"] # Linux by Zabbix agent
+  templates   = [var.linux_template_id] # e.g. "Linux by Zabbix agent" on your instance
   ip          = "192.0.2.10"
   port        = "10050"
 }

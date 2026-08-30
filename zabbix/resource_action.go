@@ -13,7 +13,8 @@ import (
 func resourceAction() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix trigger action with \"send message\" operations. " +
-			"Recovery and update operations are not supported yet.",
+			"Recovery and update operations are not supported yet. " +
+			"The whole filter and all operations are managed authoritatively: after `terraform import`, reproduce every condition and operation in the configuration before the first apply, otherwise the missing ones are removed.",
 		CreateContext: resourceActionCreate,
 		ReadContext:   resourceActionRead,
 		UpdateContext: resourceActionUpdate,
@@ -77,15 +78,14 @@ func resourceAction() *schema.Resource {
 						"conditiontype": {
 							Type:         schema.TypeInt,
 							Required:     true,
-							ValidateFunc: validation.IntInSlice([]int{0, 1, 2, 3, 4, 5, 6, 13, 15, 16, 25, 26}),
-							Description:  "Condition type: 0 - host group, 1 - host, 2 - trigger, 3 - trigger name, 4 - trigger severity, 5 - trigger dependency, 6 - time period, 13 - template, 15 - problem is suppressed, 16 - event acknowledged, 25 - event tag, 26 - event tag value.",
+							ValidateFunc: validation.IntInSlice([]int{0, 1, 2, 3, 4, 6, 13, 25, 26}),
+							Description:  "Condition type: 0 - host group, 1 - host, 2 - trigger, 3 - event name, 4 - trigger severity, 6 - time period, 13 - template, 25 - event tag, 26 - event tag value. (Set verified against Zabbix 6.4.)",
 						},
 						"operator": {
-							Type:         schema.TypeInt,
-							Optional:     true,
-							Default:      0,
-							ValidateFunc: validation.IntInSlice([]int{0, 1, 2, 3, 4, 5, 6, 7, 10, 11}),
-							Description:  "Condition operator: 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain, 4 - in, 5 - >=, 6 - <=, 7 - not in, 10 - yes, 11 - no.",
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     0,
+							Description: "Condition operator: 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain, 4 - in, 5 - >=, 6 - <=, 7 - not in. Allowed values depend on `conditiontype` and are validated at plan time.",
 						},
 						"value": {
 							Type:        schema.TypeString,
@@ -183,6 +183,29 @@ func resourceAction() *schema.Resource {
 // to manage (Read runs on refresh, so plan and destroy are affected too).
 const unmanageableHint = "manage it outside Terraform (terraform state rm <address>) or adjust it in Zabbix so the provider can represent it"
 
+// conditionOperators is the operator matrix accepted by Zabbix 6.4 for trigger
+// action conditions, verified empirically against action.create on 6.4.21.
+var conditionOperators = map[int][]int{
+	0:  {0, 1},       // host group: equals, not equals
+	1:  {0, 1},       // host
+	2:  {0, 1},       // trigger
+	3:  {2, 3},       // event name: contains, not contains
+	4:  {0, 1, 5, 6}, // severity: =, !=, >=, <=
+	6:  {4, 7},       // time period: in, not in
+	13: {0, 1},       // template
+	25: {0, 1, 2, 3}, // tag
+	26: {0, 1, 2, 3}, // tag value
+}
+
+func intIn(n int, list []int) bool {
+	for _, v := range list {
+		if v == n {
+			return true
+		}
+	}
+	return false
+}
+
 func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
 	if !planKnown(d, "condition", "operation") {
 		return nil
@@ -195,6 +218,11 @@ func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ in
 		v2, v2Known := c["value2"].(string)
 		if !ctKnown || !v2Known || isUnknownMarker(v2) {
 			continue
+		}
+		if op, ok := c["operator"].(int); ok {
+			if allowed, known := conditionOperators[ct]; known && !intIn(op, allowed) {
+				return fmt.Errorf("operator %d is not valid for condition type %d (allowed: %v)", op, ct, allowed)
+			}
 		}
 		if ct == 26 && v2 == "" {
 			return fmt.Errorf("condition type 26 (event tag value) requires value2 (the tag name)")
@@ -305,6 +333,11 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		op, err := atoi("operator", c.Operator)
 		if err != nil {
 			return nil, err
+		}
+		// Refuse combinations the provider cannot write back (action.update
+		// replaces the whole filter).
+		if allowed, known := conditionOperators[ct]; !known || !intIn(op, allowed) {
+			return nil, fmt.Errorf("action uses condition type %d with operator %d which this provider does not support; %s", ct, op, unmanageableHint)
 		}
 		conds = append(conds, map[string]interface{}{"conditiontype": ct, "operator": op, "value": c.Value, "value2": c.Value2})
 	}

@@ -34,6 +34,6 @@ resource "zabbix_action" "notify_slack" {
     default_msg = false
     subject     = "Problem: {EVENT.NAME}"
     message     = "Host: {HOST.NAME}\nSeverity: {EVENT.SEVERITY}"
-    user_groups = ["7"] # Zabbix administrators
+    user_groups = [var.admin_user_group_id] # e.g. "Zabbix administrators" on your instance
   }
 }

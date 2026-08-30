@@ -13,7 +13,8 @@ import (
 func resourceHost() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix host with a single main agent interface. " +
-			"Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched.",
+			"Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. " +
+			"`groups` and `templates` are managed authoritatively: after `terraform import`, reproduce the full lists in the configuration before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.",
 		CreateContext: resourceHostCreate,
 		ReadContext:   resourceHostRead,
 		UpdateContext: resourceHostUpdate,

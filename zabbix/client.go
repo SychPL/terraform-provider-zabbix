@@ -461,6 +461,11 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 		return fmt.Errorf("malformed JSON-RPC response from %s for %s: unexpected envelope", c.url, method)
 	}
 	if rpcResp.Error != nil {
+		if len(rpcResp.Result) != 0 {
+			// JSON-RPC 2.0 forbids carrying both; do not let such a response
+			// steer error handling (e.g. fake a session expiry after a success).
+			return fmt.Errorf("malformed JSON-RPC response from %s for %s: both result and error", c.url, method)
+		}
 		return rpcResp.Error
 	}
 	// A success response must carry a result. Anything else (an HTML login

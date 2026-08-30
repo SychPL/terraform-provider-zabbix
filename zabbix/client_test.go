@@ -313,7 +313,7 @@ func TestCall_ReloginSurvivesInitiatorCancellation(t *testing.T) {
 			if logins.Add(1) == 1 {
 				return "tok1", nil // initial session, expires immediately below
 			}
-			time.Sleep(100 * time.Millisecond) // the slow re-login
+			time.Sleep(500 * time.Millisecond) // the slow re-login
 			return "tok2", nil
 		case "hostgroup.get":
 			if req.Auth != "Bearer tok2" {
@@ -329,13 +329,15 @@ func TestCall_ReloginSurvivesInitiatorCancellation(t *testing.T) {
 	}
 	// The initiator gives up quickly (and must not be held for the whole
 	// login); a patient caller must still get the new token.
-	short, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
 	if _, err := c.GetHostGroup(short, "1"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("initiator must return with its own deadline error, got %v", err)
 	}
-	if time.Since(start) > 80*time.Millisecond {
+	// The login sleeps 500 ms; returning well before that proves the initiator
+	// did not wait for it (generous margin for a loaded CI runner).
+	if time.Since(start) > 300*time.Millisecond {
 		t.Fatalf("initiator waited for the full login instead of honouring its context (%s)", time.Since(start))
 	}
 	if _, err := c.GetHostGroup(context.Background(), "1"); err != nil {
@@ -444,7 +446,8 @@ func TestRawCall_RequestsAreNotReplayable(t *testing.T) {
 }
 
 func TestCall_MalformedSuccessResponse(t *testing.T) {
-	for _, body := range []string{`{}`, `{"jsonrpc":"2.0","id":1}`, `{"jsonrpc":"2.0","result":null,"id":1}`, `{"jsonrpc":"2.0","result":{"hostids":["1"]},"id":2}`, `{"result":{"hostids":["1"]},"id":1}`} {
+	for _, body := range []string{`{}`, `{"jsonrpc":"2.0","id":1}`, `{"jsonrpc":"2.0","result":null,"id":1}`, `{"jsonrpc":"2.0","result":{"hostids":["1"]},"id":2}`, `{"result":{"hostids":["1"]},"id":1}`,
+		`{"jsonrpc":"2.0","result":{"hostids":["1"]},"error":{"code":-32602,"message":"Invalid params.","data":"Session terminated, re-login, please."},"id":1}`} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(body))
 		}))

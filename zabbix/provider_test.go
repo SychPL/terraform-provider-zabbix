@@ -99,6 +99,39 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 	}
 }
 
+func TestProviderConfigure_TokenWinsOverEnvCredentials(t *testing.T) {
+	clearProviderEnv(t)
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "apiinfo.version":
+			return "6.4.21", nil
+		case "user.get":
+			return []map[string]string{{"userid": "1"}}, nil
+		}
+		t.Errorf("unexpected method %s (user.login must not be called)", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	t.Setenv("ZABBIX_USERNAME", "Admin")
+	t.Setenv("ZABBIX_PASSWORD", "zabbix")
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": s.URL, "api_token": "t"})
+	client, diags := providerConfigure(context.Background(), d)
+	if diags.HasError() {
+		t.Fatalf("api_token with env credentials must configure with a warning, got %v", diags)
+	}
+	var warned bool
+	for _, dg := range diags {
+		if strings.Contains(dg.Summary, "Ignoring ZABBIX_USERNAME") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("want a warning about ignored env credentials, got %v", diags)
+	}
+	if c := client.(*ZabbixClient); c.username != "" || c.password != "" {
+		t.Fatal("env credentials must be dropped when api_token is used")
+	}
+}
+
 func TestProviderConfigure_WarnsOnUntestedVersion(t *testing.T) {
 	clearProviderEnv(t)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
@@ -392,6 +425,10 @@ func TestActionCustomizeDiff(t *testing.T) {
 		{"value2 without tag type", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 0, "value": "1", "value2": "x"}}}, "only supported for condition type 26"},
 		{"tag type without value2", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "value": "prod"}}}, "requires value2"},
 		{"tag type ok", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "operator": 2, "value": "prod", "value2": "env"}}}, ""},
+		{"event name with equals operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 3, "value": "disk"}}}, "operator 0 is not valid for condition type 3"},
+		{"time period with in operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 6, "operator": 4, "value": "1-7,00:00-24:00"}}}, ""},
+		{"severity with contains operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 4, "operator": 2, "value": "4"}}}, "operator 2 is not valid for condition type 4"},
+		{"removed condition type 16", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 16, "operator": 10, "value": ""}}}, "expected condition.0.conditiontype to be one of"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

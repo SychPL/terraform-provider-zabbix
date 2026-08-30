@@ -3,12 +3,12 @@
 page_title: "zabbix_host Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched.
+  Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. groups and templates are managed authoritatively: after terraform import, reproduce the full lists in the configuration before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.
 ---
 
 # zabbix_host (Resource)
 
-Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched.
+Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP, IPMI, JMX) that exist on the host are left untouched. `groups` and `templates` are managed authoritatively: after `terraform import`, reproduce the full lists in the configuration before the first apply - templates missing from the configuration are unlinked together with their inherited items and triggers.
 
 ## Example Usage
 
@@ -23,7 +23,7 @@ resource "zabbix_host" "web01" {
   name        = "Web server 01"
   description = "Managed by Terraform"
   groups      = [zabbix_host_group.servers.id]
-  templates   = ["10001"] # Linux by Zabbix agent
+  templates   = [var.linux_template_id] # e.g. "Linux by Zabbix agent" on your instance
   ip          = "192.0.2.10"
   port        = "10050"
 }

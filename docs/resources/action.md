@@ -3,12 +3,12 @@
 page_title: "zabbix_action Resource - zabbix"
 subcategory: ""
 description: |-
-  Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet.
+  Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. The whole filter and all operations are managed authoritatively: after terraform import, reproduce every condition and operation in the configuration before the first apply, otherwise the missing ones are removed.
 ---
 
 # zabbix_action (Resource)
 
-Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet.
+Manages a Zabbix trigger action with "send message" operations. Recovery and update operations are not supported yet. The whole filter and all operations are managed authoritatively: after `terraform import`, reproduce every condition and operation in the configuration before the first apply, otherwise the missing ones are removed.
 
 ## Example Usage
 
@@ -49,7 +49,7 @@ resource "zabbix_action" "notify_slack" {
     default_msg = false
     subject     = "Problem: {EVENT.NAME}"
     message     = "Host: {HOST.NAME}\nSeverity: {EVENT.SEVERITY}"
-    user_groups = ["7"] # Zabbix administrators
+    user_groups = [var.admin_user_group_id] # e.g. "Zabbix administrators" on your instance
   }
 }
 ```
@@ -99,12 +99,12 @@ Optional:
 
 Required:
 
-- `conditiontype` (Number) Condition type: 0 - host group, 1 - host, 2 - trigger, 3 - trigger name, 4 - trigger severity, 5 - trigger dependency, 6 - time period, 13 - template, 15 - problem is suppressed, 16 - event acknowledged, 25 - event tag, 26 - event tag value.
+- `conditiontype` (Number) Condition type: 0 - host group, 1 - host, 2 - trigger, 3 - event name, 4 - trigger severity, 6 - time period, 13 - template, 25 - event tag, 26 - event tag value. (Set verified against Zabbix 6.4.)
 - `value` (String) Value to compare with.
 
 Optional:
 
-- `operator` (Number) Condition operator: 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain, 4 - in, 5 - >=, 6 - <=, 7 - not in, 10 - yes, 11 - no.
+- `operator` (Number) Condition operator: 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain, 4 - in, 5 - >=, 6 - <=, 7 - not in. Allowed values depend on `conditiontype` and are validated at plan time.
 - `value2` (String) Second value; the tag name for condition type 26 (event tag value).
 
 

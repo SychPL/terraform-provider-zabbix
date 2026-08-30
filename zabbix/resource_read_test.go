@@ -198,6 +198,21 @@ func TestActionRead_RefusesUnsupportedEventSourceAndEvaltype(t *testing.T) {
 	}
 }
 
+func TestActionRead_RefusesUnknownConditionOperator(t *testing.T) {
+	// Operator 8 (matches) exists in newer Zabbix versions but is rejected by
+	// 6.4; an imported action carrying it cannot be round-tripped.
+	fixture := strings.Replace(strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture),
+		`{"conditiontype":"26","operator":"2","value":"prod","value2":"env","formulaid":"B"}`,
+		`{"conditiontype":"26","operator":"8","value":"prod","value2":"env","formulaid":"B"}`, 1)
+	c := fixtureServer(t, "action.get", fixture)
+	d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{})
+	d.SetId("10")
+	diags := resourceAction().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "operator 8") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+		t.Fatalf("an unsupported condition operator must be refused with a hint, got %v", diags)
+	}
+}
+
 func TestActionRead_RefusesOperationConditions(t *testing.T) {
 	fixture := strings.Replace(strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture),
 		`"opconditions":[]`, `"opconditions":[{"conditiontype":"14","operator":"0","value":"0"}]`, 1)
