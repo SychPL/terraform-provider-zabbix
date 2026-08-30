@@ -31,3 +31,4 @@ Thumbs.db
 
 # Debug and execution logs
 *.log
+.reviews/
