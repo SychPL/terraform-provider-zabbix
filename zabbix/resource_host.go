@@ -71,7 +71,7 @@ func resourceHost() *schema.Resource {
 				Optional:     true,
 				Default:      "",
 				ValidateFunc: validateIP,
-				Description:  "IP address of the main agent interface (or a user macro). Required when `use_ip` is true.",
+				Description:  "IP address of the main agent interface (or a user macro). Leave both `ip` and `dns` empty to create the host without any interface (e.g. for trapper or dependent items only).",
 			},
 			"dns": {
 				Type:        schema.TypeString,
@@ -104,11 +104,19 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 	if !planKnown(d, "use_ip", "ip", "dns") {
 		return nil
 	}
-	if d.Get("use_ip").(bool) {
-		if d.Get("ip").(string) == "" {
-			return fmt.Errorf("ip is required when use_ip is true")
+	ip, dns := d.Get("ip").(string), d.Get("dns").(string)
+	if ip == "" && dns == "" {
+		// No agent interface at all - valid for hosts monitored through
+		// trapper/dependent items - but then DNS mode makes no sense.
+		if !d.Get("use_ip").(bool) {
+			return fmt.Errorf("dns is required when use_ip is false")
 		}
-	} else if d.Get("dns").(string) == "" {
+		return nil
+	}
+	if d.Get("use_ip").(bool) && ip == "" {
+		return fmt.Errorf("ip is required when use_ip is true (or set use_ip = false to connect via dns)")
+	}
+	if !d.Get("use_ip").(bool) && dns == "" {
 		return fmt.Errorf("dns is required when use_ip is false")
 	}
 	return nil
@@ -152,6 +160,9 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 	host, err := client.GetHost(ctx, d.Id())
 	if err != nil {
 		return readError(ctx, d, "host", err)
+	}
+	if host.Flags != "" && host.Flags != "0" {
+		return diag.Errorf("host %s was created by low-level discovery (flags=%s) and cannot be managed by this provider; %s", d.Id(), host.Flags, unmanageableHint)
 	}
 
 	groups := make([]string, len(host.Groups))
@@ -217,15 +228,26 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 
 	if d.HasChanges("use_ip", "ip", "dns", "port") {
 		spec := expandHost(d).Interface
-		if iface := host.AgentInterface(); iface != nil {
+		iface := host.AgentInterface()
+		switch {
+		case !spec.HasAddress() && iface == nil:
+			// nothing to do
+		case !spec.HasAddress():
+			// The interface was removed from the configuration.
+			if err := client.DeleteHostInterface(ctx, iface.InterfaceID); err != nil {
+				return diag.Errorf("removing agent interface of host %s: %s", d.Id(), err)
+			}
+		case iface != nil:
 			spec.InterfaceID = iface.InterfaceID
 			if err := client.UpdateHostInterface(ctx, spec); err != nil {
 				return diag.Errorf("updating host %s agent interface: %s", d.Id(), err)
 			}
-		} else if err := client.CreateHostInterface(ctx, d.Id(), spec); err != nil {
+		default:
 			// The agent interface is gone (removed outside Terraform or never
-			// existed on an imported host): recreate it from the configuration.
-			return diag.Errorf("creating agent interface for host %s: %s", d.Id(), err)
+			// existed on an imported host): create it from the configuration.
+			if err := client.CreateHostInterface(ctx, d.Id(), spec); err != nil {
+				return diag.Errorf("creating agent interface for host %s: %s", d.Id(), err)
+			}
 		}
 	}
 

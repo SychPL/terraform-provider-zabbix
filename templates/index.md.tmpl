@@ -16,6 +16,12 @@ provided through `ZABBIX_*` environment variables (explicit configuration
 wins). Sensitive values are masked in CLI output but stored in the Terraform
 state.
 
+~> Zabbix returns an empty result both for objects that do not exist and for
+objects the authenticated user cannot see. If the credentials lose access to a
+managed object, the provider treats it as deleted: the resource is removed from
+state (with a warning) and would be recreated on the next apply. Use
+credentials whose permissions cover everything under management.
+
 ## Example Usage
 
 {{tffile "examples/provider/provider.tf"}}

@@ -3,6 +3,7 @@ package zabbix
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -258,6 +259,78 @@ func TestMediaTypeRead_OwnNonNumericFieldRefusedWithHint(t *testing.T) {
 	diags := resourceMediaType().ReadContext(context.Background(), d, c)
 	if !diags.HasError() || !strings.Contains(diags[0].Summary, "smtp_port") || !strings.Contains(diags[0].Summary, "terraform state rm") || d.Id() != "9" {
 		t.Fatalf("an unparsable own-type field must be refused with a hint and keep the ID, got %v id=%q", diags, d.Id())
+	}
+}
+
+func TestHostResource_NoInterfaceLifecycle(t *testing.T) {
+	// Create without any interface, then add one, then remove it again.
+	hostFixture := `[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],"interfaces":[%s]}]`
+	agent := `{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}`
+	current := ""
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.create":
+			var params map[string]interface{}
+			_ = json.Unmarshal(req.Params, &params)
+			if _, ok := params["interfaces"]; ok {
+				t.Errorf("host.create without an address must not send interfaces: %s", req.Params)
+			}
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "host.update":
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "hostinterface.create":
+			current = agent
+			return map[string][]string{"interfaceids": {"5"}}, nil
+		case "hostinterface.delete":
+			current = ""
+			return map[string][]string{"interfaceids": {"5"}}, nil
+		case "host.get":
+			return json.RawMessage(fmt.Sprintf(hostFixture, current)), nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceHost()
+
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	if diags := r.CreateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if d.Get("ip") != "" || d.Get("dns") != "" {
+		t.Fatalf("no-interface host must read empty address, got ip=%v dns=%v", d.Get("ip"), d.Get("dns"))
+	}
+
+	// Add an address -> the agent interface is created.
+	d = schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": "192.0.2.1"})
+	d.SetId("1")
+	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if len(s.calls("hostinterface.create")) != 1 || d.Get("ip") != "192.0.2.1" {
+		t.Fatalf("adding an address must create the interface, ip=%v", d.Get("ip"))
+	}
+
+	// Remove the address -> the agent interface is deleted.
+	d = schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	d.SetId("1")
+	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if len(s.calls("hostinterface.delete")) != 1 || d.Get("ip") != "" {
+		t.Fatalf("removing the address must delete the interface, ip=%v", d.Get("ip"))
+	}
+}
+
+func TestHostRead_RefusesDiscoveredHost(t *testing.T) {
+	c := fixtureServer(t, "host.get", `[{"hostid":"1","host":"lld","name":"lld","status":"0","flags":"4","description":"",
+		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],"interfaces":[]}]`)
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{})
+	d.SetId("1")
+	diags := resourceHost().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "low-level discovery") || d.Id() != "1" {
+		t.Fatalf("a discovered host must be refused and keep the ID, got %v", diags)
 	}
 }
 

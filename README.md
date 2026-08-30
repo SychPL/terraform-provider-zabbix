@@ -10,7 +10,7 @@ Tested against **Zabbix 6.4** (see [docker-compose.acc.yml](docker-compose.acc.y
 | Resource | Description |
 |---|---|
 | `zabbix_host_group` | Host groups |
-| `zabbix_host` | Hosts with a main agent interface (IP or DNS), groups, templates, visible name, status |
+| `zabbix_host` | Hosts with an optional main agent interface (IP or DNS), groups, templates, visible name, status |
 | `zabbix_media_type` | Email (incl. SMTP auth/TLS), script, SMS and webhook media types |
 | `zabbix_action` | Trigger actions with conditions and "send message" operations |
 
@@ -70,8 +70,12 @@ Terraform state. Use an encrypted, access-controlled state backend.
   (empty API result) removes a resource; transport errors, timeouts and expired
   sessions are surfaced as errors. Note that Zabbix returns an empty result also
   when the user has no permission to see the object.
-- **`zabbix_host` only manages the main agent interface.** It is updated with
-  `hostinterface.update`; other interfaces (SNMP, IPMI, JMX) are never touched.
+- **`zabbix_host` only manages the main agent interface** - and the interface
+  is optional: leave `ip` and `dns` empty to create the host without one (for
+  trapper or dependent items). The interface is updated with
+  `hostinterface.update` and created/deleted when the address appears in or
+  disappears from the configuration; other interfaces (SNMP, IPMI, JMX) are
+  never touched.
   Templates removed from `templates` are unlinked with `templates_clear`, which
   also removes their inherited items and triggers.
 - **`zabbix_media_type` owns all attributes of the object.** Attributes that do

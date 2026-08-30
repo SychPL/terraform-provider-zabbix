@@ -177,8 +177,8 @@ func validateEscPeriod(v interface{}, k string) ([]string, []error) {
 
 // validateOperationEscPeriod additionally accepts 0 (inherit the action's period).
 func validateOperationEscPeriod(v interface{}, k string) ([]string, []error) {
-	if v.(string) == "0" {
-		return nil, nil
+	if secs, err := parseZabbixDuration(v.(string)); err == nil && secs == 0 {
+		return nil, nil // "0", "0s", "0m", ... - inherit from the action
 	}
 	return validateEscPeriod(v, k)
 }

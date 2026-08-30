@@ -125,6 +125,13 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		return nil, diag.Errorf("url must not contain a query string or fragment")
 	}
 	diags = append(diags, plainHTTPWarning(cfg.URL)...)
+	if cfg.Insecure {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Warning,
+			Summary:  "TLS certificate verification is disabled",
+			Detail:   "tls_insecure is enabled (possibly via ZABBIX_TLS_INSECURE); the server identity is not verified.",
+		})
+	}
 
 	client, err := NewZabbixClient(cfg)
 	if err != nil {

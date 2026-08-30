@@ -66,6 +66,8 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C22 | P3 | URL bez query/fragmentu (sekrety w query nie trafiaja do diagnostyk); mnozenie czasu odporne na overflow | `TestProviderConfigure_AuthValidation`, `TestParseZabbixDuration` | DONE |
 | C23 | P2 | Konflikt `tls_insecure`/`ca_cert_file` sprawdzany po rozwiazaniu defaultow ze srodowiska (nie `ConflictsWith`): sam `ca_cert_file` w HCL dziala, a `ZABBIX_TLS_INSECURE=true` nie omija konfliktu | `TestProviderConfigure_AuthValidation`, `TestEnvBoolDefault` | DONE |
 | C25 | P3 | `api_token` w HCL wygrywa z ZABBIX_USERNAME/PASSWORD ze srodowiska (warning zamiast twardego bledu - typowe w CI) | `TestProviderConfigure_TokenWinsOverEnvCredentials` | DONE |
+| C26 | P2 | Kazda mutacja weryfikuje typowana odpowiedz (niepusta lista oczekiwanych ID) - `{"result": false}` albo pusta lista nigdy nie jest sukcesem | `TestMutate_RejectsResultsWithoutIDs` | DONE |
+| C27 | P3 | Warning gdy `tls_insecure` aktywne (rowniez z env); memo nieudanego loginu wygasa i swieza proba przechodzi; `0s` rownowazne `0` w esc_period operacji; martwe pole `ClientConfig.Timeout` usuniete | `TestCall_FailedLoginMemoExpires`, `TestParseZabbixDuration` | DONE |
 | C24 | P3 | Konstruktor zadan `newSingleShotRequest` wydzielony i asertowany wprost (`GetBody == nil`) | `TestRawCall_RequestsAreNotReplayable` | DONE |
 
 Odrzucone z draftu: C6 (lazy login - `terraform validate` nie konfiguruje providera,
@@ -95,6 +97,8 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | H4 | P3 | Odlaczenie template przez `templates_clear` (roznica stare - nowe), drugi template zostaje | krok 2 `TestAccHost_lifecycle` (2 -> 1 template) | DONE |
 | H6 | P2 | `name` niekonfigurowane = zawsze rowne `host`; normalizacja w `CustomizeDiff` (`SetNew`), wiec zmiana nazwy widocznej poza TF pokazuje sie w planie | `TestHostCustomizeDiff_NameFollowsHostUnlessConfigured`, krok DNS `TestAccHost_lifecycle` | DONE |
 | H8 | P3 | `ip` walidowane w planie (`net.ParseIP` lub makro uzytkownika) | `TestHostCustomizeDiff` | DONE |
+| H9 | P2 | Host bez zadnego interfejsu (puste `ip` i `dns`): create bez `interfaces`, dodanie adresu tworzy interfejs, usuniecie adresu z konfiguracji usuwa go (`hostinterface.delete`) - hosty na trapper/dependent items (wymaganie uzytkownika) | `TestHostResource_NoInterfaceLifecycle`, `TestAccHost_noInterface` | DONE |
+| H10 | P3 | Read odmawia zarzadzania hostem z LLD (`flags != 0`); `host.get` nie zwraca szablonow (sprawdzone empirycznie - import ID szablonu daje not found) | `TestHostRead_RefusesDiscoveredHost` | DONE |
 | H7 | P2 | `templates_clear` liczone z aktualnego stanu API (template podpiety poza TF jest czyszczony, nie tylko odlaczany) | `TestHostUpdate_TemplatesClearFromAPIState` | DONE |
 | H5 | P2 | Host bez interfejsu agenta (zaimportowany SNMP-only lub interfejs usuniety poza TF): Read pokazuje drift (puste `ip`/`dns`), a Update tworzy interfejs agenta z konfiguracji (`hostinterface.create`); interfejs SNMP nietkniety | `TestHostRead_NoAgentInterfaceShowsDrift`, `TestHostUpdate_NoAgentInterface`, `TestHostCustomizeDiff_ImportedHostWithoutAgentInterface` | DONE |
 
@@ -157,7 +161,7 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 | T8 | P3 | CI acceptance: czeka na start zabbix-server (locki DB przy pierwszym starcie blokowaly `host.create`), lekkie template'y w tescie hosta, zrzut logow przy failu, obrazy przypiete digestem | `ci.yml`, `docker-compose.acc.yml` | DONE |
 | T10 | P3 | CI: `terraform validate` wszystkich `examples/` i `example_deployment/` na zbudowanym providerze (dev override); usuniety hook `go mod tidy` z goreleasera; docs drift lapie tez pliki nieznane gitowi; snapshot build wszystkich targetow | `ci.yml` | DONE |
 | T13 | P2 | Testy jednostkowe CRUD na poziomie zasobow (nie tylko klienta): host_group create/update/delete, action update z czyszczeniem odbiorcow, media type delete idempotentny | `TestHostGroupResource_CRUD`, `TestActionResource_UpdateSendsClearedRecipients`, `TestMediaTypeResource_DeleteIdempotent` | DONE |
-| T14 | P3 | CI: `staticcheck` (pinowany), `concurrency` z `cancel-in-progress`; template docs opisuje wykluczajace sie atrybuty (tfplugindocs ich nie renderuje) | `ci.yml`, `templates/index.md.tmpl` | DONE |
+| T14 | P3 | CI: `staticcheck` (pinowany, v0.8.1), `concurrency` z `cancel-in-progress`; template docs opisuje wykluczajace sie atrybuty i zastrzezenie o uprawnieniach (pusty wynik = usuniecie ze stanu); acceptance asertuje niezmiennosc interfejsu SNMP | `ci.yml`, `templates/index.md.tmpl`, `acc_test.go` | DONE |
 | T12 | P3 | Testy: domyslne timeouty 2 min asertowane dla 4 zasobow; `filter.conditions` zawsze tablica; sekret z URL nigdy w zadnej diagnostyce; `pause_suppressed`/`notify_if_canceled` = false round-trip w akceptacji | `TestResourceTimeoutsDefaults`, `TestActionParams_EventSourceOnlyOnCreate`, `TestProviderConfigure_AuthValidation`, `TestAccAction_lifecycle` | DONE |
 | T11 | P2 | CI acceptance: `ANALYZE` swiezej bazy przed testami - bez statystyk planera zapytania `templates_clear` trwaly minuty (potwierdzone `pg_stat_activity`), hosty testowe tworzone jako wylaczone | `ci.yml`, run 33327064286 zielony | DONE |
 | T9 | P2 | CI egzekwuje C7: blokujacy grep na `os.Stderr/Stdout`, `fmt.Fprint/Print`, `log.` w kodzie providera; `example_deployment/` w `terraform fmt -check` | `ci.yml` | DONE |
@@ -197,6 +201,9 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   swiadomy wybor, lokalne laby i test acceptance chodza po http.
 - (GLM, r7) "Wspoldzielona mapa schematu media type": jedna instancja providera na proces,
   SDK nie mutuje schematu po InternalValidate; przebudowa per wywolanie bez zysku.
+- (GLM, r10) "Import ID szablonu jako hosta uszkadza szablon": obalone empirycznie -
+  `host.get` z ID szablonu zwraca pusta liste na 6.4.21 (szablony nie sa hostami w API);
+  dodatkowo Read odmawia hostow z LLD (`flags != 0`).
 
 ## 5. Ryzyka pozostale
 

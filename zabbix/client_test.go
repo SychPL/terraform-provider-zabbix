@@ -624,6 +624,63 @@ func TestUpdateHost_NoInterfacesAndTemplatesClear(t *testing.T) {
 	}
 }
 
+func TestMutate_RejectsResultsWithoutIDs(t *testing.T) {
+	for _, body := range []string{`true`, `false`, `{"hostids":[]}`, `{"groupids":["1"]}`, `{}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","result":` + body + `,"id":1}`))
+		}))
+		c, _ := NewZabbixClient(ClientConfig{URL: srv.URL, APIToken: "t"})
+		if err := c.DeleteHost(context.Background(), "1"); err == nil {
+			t.Errorf("result %s must not count as a successful host.delete", body)
+		}
+		srv.Close()
+	}
+}
+
+func TestCall_FailedLoginMemoExpires(t *testing.T) {
+	var logins atomic.Int32
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "user.login":
+			switch logins.Add(1) {
+			case 1:
+				return "tok1", nil
+			case 2:
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: "Incorrect user name or password or account is temporarily blocked."}
+			default:
+				return "tok2", nil
+			}
+		case "hostgroup.get":
+			if req.Auth != "Bearer tok2" {
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+			}
+			return []HostGroup{{GroupID: "1", Name: "g"}}, nil
+		}
+		return nil, nil
+	})
+	c := newTestClient(t, s, passwordCfg)
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetHostGroup(context.Background(), "1"); err == nil {
+		t.Fatal("first re-login must fail")
+	}
+	// Within the memo window the same failure is returned without a new attempt.
+	if _, err := c.GetHostGroup(context.Background(), "1"); err == nil || logins.Load() != 2 {
+		t.Fatalf("memoised failure expected, logins=%d err=%v", logins.Load(), err)
+	}
+	// After the memo expires a fresh attempt succeeds.
+	c.mu.Lock()
+	c.failed.at = time.Now().Add(-time.Minute)
+	c.mu.Unlock()
+	if _, err := c.GetHostGroup(context.Background(), "1"); err != nil {
+		t.Fatalf("after memo expiry the login must be retried and succeed: %v", err)
+	}
+	if logins.Load() != 3 {
+		t.Fatalf("want exactly one fresh login after expiry, got %d", logins.Load())
+	}
+}
+
 func TestIsObjectMissing(t *testing.T) {
 	err := &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
 	if !IsObjectMissing(err) {

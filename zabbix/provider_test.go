@@ -315,9 +315,10 @@ func TestHostCustomizeDiff_ImportedHostWithoutAgentInterface(t *testing.T) {
 	if err != nil || diff == nil || diff.Attributes["ip"] == nil || diff.Attributes["ip"].New != "192.0.2.5" {
 		t.Errorf("configuring the agent interface of an imported host must plan its creation, got diff=%v err=%v", diff, err)
 	}
+	// No interface attributes configured at all: valid (agentless host).
 	noIP := map[string]interface{}{"host": "snmp-only", "groups": []interface{}{"2"}, "description": "new"}
-	if _, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(noIP), nil); err == nil || !strings.Contains(err.Error(), "ip is required") {
-		t.Errorf("a host without any interface description must be rejected, got %v", err)
+	if _, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(noIP), nil); err != nil {
+		t.Errorf("a host without interface attributes must plan (agentless), got %v", err)
 	}
 }
 
@@ -347,8 +348,11 @@ func TestHostCustomizeDiff(t *testing.T) {
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "ip": "{$HOST.IP}"}); err != nil {
 		t.Errorf("a user macro must be a valid ip: %v", err)
 	}
-	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups}); err == nil || !strings.Contains(err.Error(), "ip is required") {
-		t.Errorf("use_ip without ip must fail, got %v", err)
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups}); err != nil {
+		t.Errorf("a host without any interface must plan (trapper/dependent items only), got %v", err)
+	}
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "dns": "x.local"}); err == nil || !strings.Contains(err.Error(), "ip is required") {
+		t.Errorf("dns with use_ip=true must ask for ip or use_ip=false, got %v", err)
 	}
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "use_ip": false}); err == nil || !strings.Contains(err.Error(), "dns is required") {
 		t.Errorf("dns mode without dns must fail, got %v", err)

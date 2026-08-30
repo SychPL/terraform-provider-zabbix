@@ -218,8 +218,52 @@ func testAccCheckHostInterfaces(t *testing.T, addr string, want int) resource.Te
 		if len(host.Interfaces) != want {
 			return fmt.Errorf("host %s: want %d interfaces, got %d (%+v)", id, want, len(host.Interfaces), host.Interfaces)
 		}
+		// The unmanaged SNMP interface must survive untouched (same address).
+		for _, iface := range host.Interfaces {
+			if iface.Type == "2" && (iface.IP != "192.0.2.99" || iface.Port != "161") {
+				return fmt.Errorf("host %s: the SNMP interface was modified: %+v", id, iface)
+			}
+		}
 		return nil
 	}
+}
+
+func TestAccHost_noInterface(t *testing.T) {
+	name := acctest.RandomWithPrefix("tfacc-noiface")
+	base := testAccProviderConfig() + fmt.Sprintf(`
+resource "zabbix_host_group" "g" { name = "%s-grp" }
+`, name)
+	bare := base + fmt.Sprintf(`
+resource "zabbix_host" "h" {
+  host    = %q
+  enabled = false
+  groups  = [zabbix_host_group.g.id]
+}`, name)
+	withIP := base + fmt.Sprintf(`
+resource "zabbix_host" "h" {
+  host    = %q
+  enabled = false
+  groups  = [zabbix_host_group.g.id]
+  ip      = "192.0.2.30"
+}`, name)
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckGone(t, "zabbix_host.h", func(c *ZabbixClient, id string) error { _, err := c.GetHost(context.Background(), id); return err }),
+		Steps: []resource.TestStep{
+			{Config: bare, Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_host.h", "ip", ""),
+				resource.TestCheckResourceAttr("zabbix_host.h", "dns", ""),
+				testAccCheckHostInterfaces(t, "zabbix_host.h", 0),
+			)},
+			{Config: withIP, Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_host.h", "ip", "192.0.2.30"),
+				testAccCheckHostInterfaces(t, "zabbix_host.h", 1),
+			)},
+			{Config: bare, Check: testAccCheckHostInterfaces(t, "zabbix_host.h", 0)},
+			{ResourceName: "zabbix_host.h", ImportState: true, ImportStateVerify: true},
+		},
+	})
 }
 
 // --- zabbix_media_type ---

@@ -41,8 +41,10 @@
 ### Added
 
 - `api_token` authentication (Bearer header, validated at provider configure),
-  `tls_insecure`, `ca_cert_file` (added to the system trust store; mutually
-  exclusive with `tls_insecure`, also when set through the environment). HTTP redirects are never followed and
+  `tls_insecure` (warns when active), `ca_cert_file` (added to the system
+  trust store; mutually exclusive with `tls_insecure`, also when set through
+  the environment). Every mutation verifies a typed response with the
+  expected object IDs. HTTP redirects are never followed and
   malformed JSON-RPC responses are never treated as success; URLs with embedded
   credentials are rejected.
 - Automatic single re-login when a username/password session expires; all
@@ -59,7 +61,10 @@
 - `zabbix_host`: `name` (follows `host` unless configured; drift of a
   non-configured name shows in the plan), `enabled`, `description`, `use_ip`,
   `dns`. Templates linked outside Terraform are cleared on update, not only
-  unlinked.
+  unlinked. A host can be created without any interface (leave `ip` and `dns`
+  empty, e.g. for trapper or dependent items); adding an address later creates
+  the agent interface and removing it deletes the interface. Hosts created by
+  low-level discovery are refused.
 - `zabbix_media_type`: SMTP port/security/verification/authentication,
   `username`, `password`; sensitive webhook parameter values; plan-time
   validation per media type (attributes of other types are rejected, a type

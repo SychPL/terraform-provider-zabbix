@@ -50,7 +50,7 @@ resource "zabbix_host" "db01" {
 - `description` (String) Description of the host.
 - `dns` (String) DNS name of the main agent interface. Required when `use_ip` is false.
 - `enabled` (Boolean) Whether the host is monitored.
-- `ip` (String) IP address of the main agent interface (or a user macro). Required when `use_ip` is true.
+- `ip` (String) IP address of the main agent interface (or a user macro). Leave both `ip` and `dns` empty to create the host without any interface (e.g. for trapper or dependent items only).
 - `name` (String) Visible name of the host. Defaults to `host`.
 - `port` (String) Port of the main agent interface (number or user macro).
 - `templates` (Set of String) IDs of templates linked to the host. Templates removed from this set are unlinked and their inherited entities cleared.

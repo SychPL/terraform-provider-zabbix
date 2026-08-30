@@ -19,10 +19,17 @@ variable "zabbix_username" {
 }
 
 variable "zabbix_password" {
+  # Local docker-compose sandbox only (see docker-compose.acc.yml); pass the
+  # real password explicitly, e.g. TF_VAR_zabbix_password.
   type        = string
   description = "Zabbix API password"
   sensitive   = true
-  default     = "zabbix"
+}
+
+variable "admin_user_group_id" {
+  type        = string
+  description = "ID of the user group to notify (7 = Zabbix administrators on a fresh install)"
+  default     = "7" # local sandbox default
 }
 
 provider "zabbix" {
@@ -81,6 +88,6 @@ resource "zabbix_action" "alert_action" {
     default_msg   = false
     subject       = "Zabbix Alert: {TRIGGER.NAME}"
     message       = "Problem detected on server: {TRIGGER.NAME} - status {TRIGGER.STATUS}"
-    user_groups   = ["7"]
+    user_groups   = [var.admin_user_group_id]
   }
 }
