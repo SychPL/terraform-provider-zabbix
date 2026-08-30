@@ -290,9 +290,11 @@ func expandAction(d *schema.ResourceData) *Action {
 			OpMessage: &ActionOpMessage{
 				MediaTypeID: o["mediatypeid"].(string),
 				DefaultMsg:  boolToFlag(o["default_msg"].(bool)),
-				Subject:     o["subject"].(string),
-				Message:     o["message"].(string),
 			},
+		}
+		if !o["default_msg"].(bool) {
+			subject, message := o["subject"].(string), o["message"].(string)
+			op.OpMessage.Subject, op.OpMessage.Message = &subject, &message
 		}
 		for _, g := range setStrings(o["user_groups"]) {
 			op.OpMessageGrp = append(op.OpMessageGrp, ActionOpMessageGrp{Usrgrpid: g})
@@ -390,8 +392,12 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 			// Zabbix keeps stale subject/message values when default_msg is switched
 			// on; they are meaningless then, so they are not reflected in state.
 			if o.OpMessage.DefaultMsg == "0" {
-				flat["subject"] = o.OpMessage.Subject
-				flat["message"] = o.OpMessage.Message
+				if o.OpMessage.Subject != nil {
+					flat["subject"] = *o.OpMessage.Subject
+				}
+				if o.OpMessage.Message != nil {
+					flat["message"] = *o.OpMessage.Message
+				}
 			}
 		}
 		ops = append(ops, flat)
@@ -418,7 +424,7 @@ func resourceActionCreate(ctx context.Context, d *schema.ResourceData, m interfa
 		return diag.Errorf("creating action: %s", err)
 	}
 	d.SetId(id)
-	return resourceActionRead(ctx, d, m)
+	return readAfterCreate(ctx, d, m, resourceActionRead, "action")
 }
 
 func resourceActionRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
@@ -441,11 +447,16 @@ func resourceActionRead(ctx context.Context, d *schema.ResourceData, m interface
 func resourceActionUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	// SDKv2 writes the planned values into state even when Update fails (see
+	// ResourceData.Partial); partial mode preserves the previous state until
+	// the mutation is confirmed, then the final Read refreshes everything.
+	d.Partial(true)
 	action := expandAction(d)
 	action.ActionID = d.Id()
 	if err := client.UpdateAction(ctx, action); err != nil {
 		return diag.Errorf("updating action %s: %s", d.Id(), err)
 	}
+	d.Partial(false)
 	return resourceActionRead(ctx, d, m)
 }
 

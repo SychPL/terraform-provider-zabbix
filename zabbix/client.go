@@ -264,8 +264,12 @@ type ActionOperation struct {
 type ActionOpMessage struct {
 	MediaTypeID string `json:"mediatypeid"`
 	DefaultMsg  string `json:"default_msg"`
-	Subject     string `json:"subject,omitempty"` // only allowed when DefaultMsg == "0"
-	Message     string `json:"message,omitempty"` // only allowed when DefaultMsg == "0"
+	// Only allowed when DefaultMsg == "0" (the API rejects them otherwise),
+	// but then always sent, even when empty: action.update merges omitted
+	// fields with the stored values, so an omitted subject would silently
+	// keep a stale one forever (perpetual diff).
+	Subject *string `json:"subject,omitempty"`
+	Message *string `json:"message,omitempty"`
 }
 
 type ActionOpMessageGrp struct {
@@ -527,24 +531,39 @@ func newSingleShotRequest(ctx context.Context, url string, body []byte, token st
 
 func firstID(res map[string][]string, key string) (string, error) {
 	ids := res[key]
-	if len(ids) == 0 {
+	if len(ids) == 0 || ids[0] == "" {
 		return "", fmt.Errorf("no %s returned from Zabbix", key)
 	}
 	return ids[0], nil
 }
 
-// mutate performs a mutation and verifies that the response carries a
-// non-empty list under key: a response like {"result": false} or an empty ID
-// list must never count as success.
-func (c *ZabbixClient) mutate(ctx context.Context, method string, params interface{}, key string) error {
+// mutate performs a mutation and verifies that the response confirms the
+// mutated object: {"result": false}, an empty ID list, empty IDs or a foreign
+// object's ID must never count as success. id may be empty for calls that
+// create an object (the returned ID is unknown up front).
+func (c *ZabbixClient) mutate(ctx context.Context, method string, params interface{}, key, id string) error {
 	var res map[string][]string
 	if err := c.Call(ctx, method, params, &res); err != nil {
 		return err
 	}
-	if len(res[key]) == 0 {
+	ids := res[key]
+	if len(ids) == 0 {
 		return fmt.Errorf("%s reported success but returned no %s", method, key)
 	}
-	return nil
+	if id == "" {
+		for _, got := range ids {
+			if got != "" {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s reported success but returned only empty %s", method, key)
+	}
+	for _, got := range ids {
+		if got == id {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s reported success but returned %s %q instead of %q", method, key, ids, id)
 }
 
 // --- HOST GROUP ---
@@ -573,11 +592,11 @@ func (c *ZabbixClient) GetHostGroup(ctx context.Context, id string) (*HostGroup,
 }
 
 func (c *ZabbixClient) UpdateHostGroup(ctx context.Context, id, name string) error {
-	return c.mutate(ctx, "hostgroup.update", map[string]string{"groupid": id, "name": name}, "groupids")
+	return c.mutate(ctx, "hostgroup.update", map[string]string{"groupid": id, "name": name}, "groupids", id)
 }
 
 func (c *ZabbixClient) DeleteHostGroup(ctx context.Context, id string) error {
-	return c.mutate(ctx, "hostgroup.delete", []string{id}, "groupids")
+	return c.mutate(ctx, "hostgroup.delete", []string{id}, "groupids", id)
 }
 
 // --- HOST ---
@@ -659,7 +678,7 @@ func (c *ZabbixClient) UpdateHost(ctx context.Context, id string, spec *HostSpec
 	if len(templatesClear) > 0 {
 		params["templates_clear"] = templateRefs(templatesClear)
 	}
-	return c.mutate(ctx, "host.update", params, "hostids")
+	return c.mutate(ctx, "host.update", params, "hostids", id)
 }
 
 // CreateHostInterface adds a main agent interface to an existing host.
@@ -673,12 +692,12 @@ func (c *ZabbixClient) CreateHostInterface(ctx context.Context, hostID string, i
 		"dns":    iface.DNS,
 		"port":   iface.Port,
 	}
-	return c.mutate(ctx, "hostinterface.create", params, "interfaceids")
+	return c.mutate(ctx, "hostinterface.create", params, "interfaceids", "")
 }
 
 // DeleteHostInterface removes an interface from a host.
 func (c *ZabbixClient) DeleteHostInterface(ctx context.Context, interfaceID string) error {
-	return c.mutate(ctx, "hostinterface.delete", []string{interfaceID}, "interfaceids")
+	return c.mutate(ctx, "hostinterface.delete", []string{interfaceID}, "interfaceids", interfaceID)
 }
 
 func (c *ZabbixClient) UpdateHostInterface(ctx context.Context, iface HostInterface) error {
@@ -689,11 +708,11 @@ func (c *ZabbixClient) UpdateHostInterface(ctx context.Context, iface HostInterf
 		"dns":         iface.DNS,
 		"port":        iface.Port,
 	}
-	return c.mutate(ctx, "hostinterface.update", params, "interfaceids")
+	return c.mutate(ctx, "hostinterface.update", params, "interfaceids", iface.InterfaceID)
 }
 
 func (c *ZabbixClient) DeleteHost(ctx context.Context, id string) error {
-	return c.mutate(ctx, "host.delete", []string{id}, "hostids")
+	return c.mutate(ctx, "host.delete", []string{id}, "hostids", id)
 }
 
 // --- MEDIA TYPE ---
@@ -800,11 +819,11 @@ func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType,
 func (c *ZabbixClient) UpdateMediaType(ctx context.Context, mt *MediaType) error {
 	params := mediaTypeParams(mt)
 	params["mediatypeid"] = mt.MediaTypeID
-	return c.mutate(ctx, "mediatype.update", params, "mediatypeids")
+	return c.mutate(ctx, "mediatype.update", params, "mediatypeids", mt.MediaTypeID)
 }
 
 func (c *ZabbixClient) DeleteMediaType(ctx context.Context, id string) error {
-	return c.mutate(ctx, "mediatype.delete", []string{id}, "mediatypeids")
+	return c.mutate(ctx, "mediatype.delete", []string{id}, "mediatypeids", id)
 }
 
 // --- ACTION ---
@@ -861,9 +880,9 @@ func (c *ZabbixClient) GetAction(ctx context.Context, id string) (*Action, error
 func (c *ZabbixClient) UpdateAction(ctx context.Context, action *Action) error {
 	params := actionParams(action)
 	params["actionid"] = action.ActionID
-	return c.mutate(ctx, "action.update", params, "actionids")
+	return c.mutate(ctx, "action.update", params, "actionids", action.ActionID)
 }
 
 func (c *ZabbixClient) DeleteAction(ctx context.Context, id string) error {
-	return c.mutate(ctx, "action.delete", []string{id}, "actionids")
+	return c.mutate(ctx, "action.delete", []string{id}, "actionids", id)
 }

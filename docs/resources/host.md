@@ -13,6 +13,11 @@ Manages a Zabbix host with a single main agent interface. Other interfaces (SNMP
 ## Example Usage
 
 ```terraform
+variable "linux_template_id" {
+  type        = string
+  description = "ID of the agent template to link, e.g. template.get filter host=\"Linux by Zabbix agent\"."
+}
+
 resource "zabbix_host_group" "servers" {
   name = "Linux servers"
 }

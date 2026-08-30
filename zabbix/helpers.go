@@ -204,3 +204,17 @@ func validatePort(v interface{}, k string) ([]string, []error) {
 	}
 	return nil, nil
 }
+
+// readAfterCreate runs the first Read after a successful create. An empty
+// result there is a consistency error, not a deletion: forgetting the ID (the
+// normal Read behaviour) would orphan the object that was just created, so
+// the ID is kept and an error is returned instead.
+func readAfterCreate(ctx context.Context, d *schema.ResourceData, m interface{}, read schema.ReadContextFunc, kind string) diag.Diagnostics {
+	id := d.Id()
+	diags := read(ctx, d, m)
+	if d.Id() == "" && !diags.HasError() {
+		d.SetId(id)
+		return diag.Errorf("%s %s was created but the follow-up read returned no object; keeping it in state - check API consistency (stale replica/proxy) and re-run terraform", kind, id)
+	}
+	return diags
+}

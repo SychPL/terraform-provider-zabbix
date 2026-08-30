@@ -372,6 +372,72 @@ func TestHostCreate_SendsInterfacePayload(t *testing.T) {
 	}
 }
 
+func TestActionParams_CustomSubjectAlwaysSent(t *testing.T) {
+	r := resourceAction()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{
+		"name": "a",
+		"operation": []interface{}{map[string]interface{}{
+			"users": []interface{}{"1"}, "default_msg": false, "subject": "", "message": "",
+		}},
+	})
+	b, err := json.Marshal(actionParams(expandAction(d)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An empty subject/message must be transmitted: action.update merges
+	// omitted fields with the stored values, which would resurrect a stale
+	// subject and produce a perpetual diff.
+	if !strings.Contains(string(b), `"subject":""`) || !strings.Contains(string(b), `"message":""`) {
+		t.Errorf("custom message must always send subject/message, got %s", b)
+	}
+
+	d = schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{
+		"name": "a",
+		"operation": []interface{}{map[string]interface{}{
+			"users": []interface{}{"1"}, "subject": "", "message": "",
+		}},
+	})
+	b, err = json.Marshal(actionParams(expandAction(d)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"subject"`) || strings.Contains(string(b), `"message":`) {
+		t.Errorf("default_msg = true must not send subject/message (the API rejects them), got %s", b)
+	}
+}
+
+func TestHostResource_DeleteIdempotent(t *testing.T) {
+	var gone bool
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.delete":
+			if gone {
+				return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
+			}
+			gone = true
+			return map[string][]string{"hostids": {"7"}}, nil
+		case "host.get":
+			return json.RawMessage(`[]`), nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceHost()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	d.SetId("7")
+	if diags := r.DeleteContext(context.Background(), d, c); diags.HasError() {
+		t.Fatalf("first delete: %v", diags)
+	}
+	d.SetId("7")
+	if diags := r.DeleteContext(context.Background(), d, c); diags.HasError() {
+		t.Fatalf("second delete must be idempotent (object already gone), got %v", diags)
+	}
+	if calls := s.calls("host.delete"); len(calls) != 2 {
+		t.Fatalf("want 2 host.delete calls, got %d", len(calls))
+	}
+}
+
 func TestHostRead_RefusesDiscoveredHost(t *testing.T) {
 	c := fixtureServer(t, "host.get", `[{"hostid":"1","host":"lld","name":"lld","status":"0","flags":"4","description":"",
 		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],"interfaces":[]}]`)
@@ -428,7 +494,7 @@ func TestActionResource_UpdateSendsClearedRecipients(t *testing.T) {
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "action.update":
-			return map[string][]string{"actionids": {"7"}}, nil
+			return map[string][]string{"actionids": {"10"}}, nil
 		case "action.get":
 			return json.RawMessage(strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)), nil
 		}
@@ -541,6 +607,32 @@ func TestHostUpdate_PartialFailureKeepsID(t *testing.T) {
 	}
 	if len(s.calls("hostinterface.update")) != 1 {
 		t.Fatal("the interface update must have been attempted once")
+	}
+	// SDKv2 would otherwise persist the planned values despite the failure;
+	// partial mode must keep the previous state (the planned IP is not saved).
+	if st := d.State(); st == nil || st.Attributes["ip"] == "192.0.2.9" {
+		t.Fatalf("planned values must not be written to state after a failed update, got %+v", st)
+	}
+}
+
+func TestHostGroupCreate_EmptyReadKeepsID(t *testing.T) {
+	// A read that comes back empty right after a successful create is a
+	// consistency problem; forgetting the ID would orphan the new object.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "hostgroup.create":
+			return map[string][]string{"groupids": {"42"}}, nil
+		case "hostgroup.get":
+			return json.RawMessage(`[]`), nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceHostGroup().Schema, map[string]interface{}{"name": "g"})
+	diags := resourceHostGroup().CreateContext(context.Background(), d, c)
+	if !diags.HasError() || d.Id() != "42" {
+		t.Fatalf("an empty read after create must error and keep the ID, got diags=%v id=%q", diags, d.Id())
 	}
 }
 

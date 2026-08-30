@@ -17,17 +17,6 @@
 - `zabbix_media_type`: attributes not relevant for the selected `type` are
   rejected at plan time (e.g. `parameter` blocks on an email media type).
 
-### Added
-
-- `zabbix_media_type`: full Zabbix 6.4 object model - `description`,
-  `max_sessions`, `max_attempts`, `attempt_interval`, `content_type` (email),
-  `process_tags`, `show_event_menu`, `event_menu_url`, `event_menu_name`
-  (webhook). Changing them outside Terraform now shows up as drift.
-- The provider rejects Zabbix 6.4.0 at configure time with a clear diagnostic
-  (`user.checkAuthentication` cannot validate API tokens before 6.4.1).
-- Configure warnings (plain HTTP, disabled TLS verification, ignored ambient
-  credentials) are reported even when configure fails.
-
 ### Fixed
 
 - Read no longer removes a resource from state on transport errors, timeouts
@@ -48,9 +37,27 @@
 - `zabbix_action`: `eventsource` is immutable (ForceNew) and no longer sent on
   update; recipients removed from configuration are now removed in Zabbix.
 - Removed debug output of full API payloads to stderr.
+- `zabbix_action`: an empty `subject`/`message` with `default_msg = false` is
+  now sent explicitly; the API merges omitted fields, which kept the stale
+  value and produced a perpetual diff.
+- Failed updates no longer write the planned values into the Terraform state
+  (an SDKv2 default); partial mode keeps the previous state until the API
+  confirms the mutation.
+- A create whose immediate follow-up read returns empty keeps the new ID and
+  fails loudly instead of orphaning the object outside the state.
+- Mutation responses are verified against the mutated object's ID; empty or
+  foreign IDs are errors.
 
 ### Added
 
+- `zabbix_media_type`: full Zabbix 6.4 object model - `description`,
+  `max_sessions`, `max_attempts`, `attempt_interval`, `content_type` (email),
+  `process_tags`, `show_event_menu`, `event_menu_url`, `event_menu_name`
+  (webhook). Changing them outside Terraform now shows up as drift.
+- The provider rejects Zabbix 6.4.0 at configure time with a clear diagnostic
+  (`user.checkAuthentication` cannot validate API tokens before 6.4.1).
+- Configure warnings (plain HTTP, disabled TLS verification, ignored ambient
+  credentials) are reported even when configure fails.
 - `api_token` authentication (Bearer header, validated at configure time with
   `user.checkAuthentication`, independent of the token's method permissions),
   `tls_insecure` (warns when active), `ca_cert_file` (added to the system

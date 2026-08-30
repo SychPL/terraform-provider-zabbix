@@ -26,6 +26,15 @@ variable "zabbix_password" {
   sensitive   = true
 }
 
+variable "slack_webhook_url" {
+  # Local docker-compose sandbox placeholder; point it at a real (secret)
+  # incoming-webhook URL in production, e.g. TF_VAR_slack_webhook_url.
+  type        = string
+  description = "Incoming webhook URL alerts are delivered to"
+  sensitive   = true
+  default     = "http://localhost/slack-webhook"
+}
+
 variable "admin_user_group_id" {
   type        = string
   description = "ID of the user group to notify (7 = Zabbix administrators on a fresh install)"
@@ -53,12 +62,22 @@ resource "zabbix_media_type" "slack_webhook" {
   name    = "Slack Notifications Webhook"
   type    = 4 # Webhook
   enabled = true
-  script  = "var params = JSON.parse(value);\nvar req = new HttpRequest();\nreq.post(params.url, JSON.stringify({text: params.message}));\nreturn 'OK';"
   timeout = "30s"
+  script  = <<-EOT
+    var params = JSON.parse(value);
+    var req = new HttpRequest();
+    req.addHeader('Content-Type: application/json');
+    req.post(params.url, JSON.stringify({ text: params.message }));
+    // A delivery the endpoint rejected must not count as a sent alert.
+    if (req.getStatus() < 200 || req.getStatus() >= 300) {
+      throw 'Webhook responded with HTTP ' + req.getStatus();
+    }
+    return 'OK';
+  EOT
 
   parameter {
     name  = "url"
-    value = "http://localhost/slack-webhook"
+    value = var.slack_webhook_url
   }
   parameter {
     name  = "message"

@@ -113,6 +113,12 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		default:
 			return nil, diag.Errorf("api_token and username/password are mutually exclusive")
 		}
+		// Re-validate after dropping the ambient method: the remaining explicit
+		// credentials may be incomplete (e.g. username in HCL without password
+		// must not silently fall back to a login with an empty password).
+		if cfg.APIToken == "" && (cfg.Username == "" || cfg.Password == "") {
+			return nil, diag.Errorf("both username and password must be configured (the API token from the environment is ignored for explicitly configured credentials)")
+		}
 	}
 	// Checked here, not with ConflictsWith: both attributes have environment
 	// defaults, and a default must neither trigger a false conflict nor let

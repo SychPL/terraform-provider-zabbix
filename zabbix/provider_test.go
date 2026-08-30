@@ -342,6 +342,16 @@ func TestProviderConfigure_RejectsZabbix640(t *testing.T) {
 	}
 }
 
+func TestProviderConfigure_IncompleteCredentialsWithEnvToken(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv("ZABBIX_API_TOKEN", "envtok")
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php", "username": "u"})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "both username and password") {
+		t.Fatalf("username without password must not silently drop the env token and log in with an empty password, got %v", diags)
+	}
+}
+
 func TestWrittenInRaw(t *testing.T) {
 	raw := cty.ObjectVal(map[string]cty.Value{
 		"api_token": cty.StringVal("t"),

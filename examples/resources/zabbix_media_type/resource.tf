@@ -1,3 +1,13 @@
+variable "slack_webhook_url" {
+  type      = string
+  sensitive = true
+}
+
+variable "smtp_password" {
+  type      = string
+  sensitive = true
+}
+
 # Webhook media type; secrets belong in parameters (marked sensitive), not in the script.
 resource "zabbix_media_type" "slack" {
   name    = "Slack"

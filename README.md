@@ -43,7 +43,9 @@ resource "zabbix_host_group" "servers" {
 resource "zabbix_host" "web01" {
   host      = "web01"
   groups    = [zabbix_host_group.servers.id]
-  templates = ["10001"] # Linux by Zabbix agent
+  # Template IDs differ between installations: look yours up with
+  # template.get (or Data collection -> Templates in the UI).
+  templates = [var.linux_template_id]
   ip        = "192.0.2.10"
 }
 ```

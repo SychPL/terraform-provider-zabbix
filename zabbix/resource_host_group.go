@@ -36,7 +36,7 @@ func resourceHostGroupCreate(ctx context.Context, d *schema.ResourceData, m inte
 		return diag.Errorf("creating host group: %s", err)
 	}
 	d.SetId(id)
-	return resourceHostGroupRead(ctx, d, m)
+	return readAfterCreate(ctx, d, m, resourceHostGroupRead, "host group")
 }
 
 func resourceHostGroupRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
@@ -55,11 +55,16 @@ func resourceHostGroupRead(ctx context.Context, d *schema.ResourceData, m interf
 func resourceHostGroupUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	// SDKv2 writes the planned values into state even when Update fails (see
+	// ResourceData.Partial); partial mode preserves the previous state until
+	// the mutation is confirmed, then the final Read refreshes everything.
+	d.Partial(true)
 	if d.HasChange("name") {
 		if err := client.UpdateHostGroup(ctx, d.Id(), d.Get("name").(string)); err != nil {
 			return diag.Errorf("updating host group %s: %s", d.Id(), err)
 		}
 	}
+	d.Partial(false)
 	return resourceHostGroupRead(ctx, d, m)
 }
 

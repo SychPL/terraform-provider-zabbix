@@ -264,6 +264,46 @@ func TestCall_FailedReloginIsSharedByWaiters(t *testing.T) {
 	}
 }
 
+func TestMutate_RejectsEmptyAndForeignIDs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ids     []string
+		wantErr string
+	}{
+		"empty list":  {[]string{}, "returned no hostids"},
+		"empty id":    {[]string{""}, "instead of"},
+		"foreign id":  {[]string{"999"}, "instead of"},
+		"matching id": {[]string{"999", "7"}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+				return map[string][]string{"hostids": tc.ids}, nil
+			})
+			c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+			err := c.mutate(context.Background(), "host.update", map[string]string{"hostid": "7"}, "hostids", "7")
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+
+	// Create-style mutation (no ID known up front): all-empty IDs must fail.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		return map[string][]string{"interfaceids": {""}}, nil
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	if err := c.mutate(context.Background(), "hostinterface.create", nil, "interfaceids", ""); err == nil || !strings.Contains(err.Error(), "only empty") {
+		t.Fatalf("all-empty ID list must fail a create-style mutation, got %v", err)
+	}
+
+	// firstID must reject an empty ID (a create must never produce an empty state ID).
+	if _, err := firstID(map[string][]string{"hostids": {""}}, "hostids"); err == nil {
+		t.Fatal("firstID must reject an empty ID")
+	}
+}
+
 func TestMediaTypeParams_ScriptParametersUntouched(t *testing.T) {
 	p := mediaTypeParams(&MediaType{Type: "1", ExecPath: "x.sh"})
 	if _, ok := p["parameters"]; ok {

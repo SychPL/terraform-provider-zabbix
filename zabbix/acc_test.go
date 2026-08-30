@@ -189,6 +189,21 @@ resource "zabbix_host" "h" {
 					testAccCheckHostInterfaces(t, "zabbix_host.h", 2),
 				),
 			},
+			{
+				// User macro as the agent port must round-trip through the API.
+				Config: base + fmt.Sprintf(`
+resource "zabbix_host" "h" {
+  host    = %q
+  enabled = false
+  groups  = [zabbix_host_group.g.id]
+  ip      = "192.0.2.12"
+  port    = "{$TFACC.AGENT.PORT}"
+}`, name),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zabbix_host.h", "port", "{$TFACC.AGENT.PORT}"),
+					resource.TestCheckResourceAttr("zabbix_host.h", "ip", "192.0.2.12"),
+				),
+			},
 			{ResourceName: "zabbix_host.h", ImportState: true, ImportStateVerify: true},
 		},
 	})
@@ -218,11 +233,21 @@ func testAccCheckHostInterfaces(t *testing.T, addr string, want int) resource.Te
 		if len(host.Interfaces) != want {
 			return fmt.Errorf("host %s: want %d interfaces, got %d (%+v)", id, want, len(host.Interfaces), host.Interfaces)
 		}
-		// The unmanaged SNMP interface must survive untouched (same address).
+		// The unmanaged SNMP interface must survive untouched (same address) -
+		// and must still exist when two interfaces are expected (a second agent
+		// interface replacing it would keep the count at two).
+		var snmp int
 		for _, iface := range host.Interfaces {
-			if iface.Type == "2" && (iface.IP != "192.0.2.99" || iface.Port != "161") {
+			if iface.Type != "2" {
+				continue
+			}
+			snmp++
+			if iface.IP != "192.0.2.99" || iface.Port != "161" {
 				return fmt.Errorf("host %s: the SNMP interface was modified: %+v", id, iface)
 			}
+		}
+		if want == 2 && snmp != 1 {
+			return fmt.Errorf("host %s: the unmanaged SNMP interface disappeared (interfaces: %+v)", id, host.Interfaces)
 		}
 		return nil
 	}
@@ -447,6 +472,24 @@ resource "zabbix_action" "act" {
     users       = [%q]
   }
 `, adminUser)
+	// Clearing subject/message while keeping default_msg = false: the API
+	// merges omitted opmessage fields, so this only converges when the empty
+	// strings are transmitted explicitly.
+	opsCleared := fmt.Sprintf(`
+  operation {
+    mediatypeid = zabbix_media_type.wh.id
+    default_msg = false
+    subject     = ""
+    message     = ""
+    users       = [%q]
+  }
+`, adminUser)
+	opsMacro := fmt.Sprintf(`
+  operation {
+    esc_period = "{$TFACC.ESC}"
+    users      = [%q]
+  }
+`, adminUser)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
@@ -462,6 +505,12 @@ resource "zabbix_action" "act" {
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.users.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.subject", "{TRIGGER.NAME}"),
 			)},
+			{Config: cfg(name, opsCleared), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_action.act", "operation.#", "1"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.default_msg", "false"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.subject", ""),
+				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.message", ""),
+			)},
 			{Config: cfg(name+"-renamed", opsUsersOnly), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_action.act", "name", name+"-renamed"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.user_groups.#", "0"),
@@ -471,6 +520,11 @@ resource "zabbix_action" "act" {
 				resource.TestCheckResourceAttr("zabbix_action.act", "pause_suppressed", "false"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "notify_if_canceled", "false"),
 			)},
+			{
+				// User macro as an operation step duration must round-trip.
+				Config: cfg(name+"-renamed", opsMacro),
+				Check:  resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.esc_period", "{$TFACC.ESC}"),
+			},
 			{ResourceName: "zabbix_action.act", ImportState: true, ImportStateVerify: true},
 		},
 	})

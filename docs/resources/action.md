@@ -13,6 +13,11 @@ Manages a Zabbix trigger action with "send message" operations. Recovery and upd
 ## Example Usage
 
 ```terraform
+variable "admin_user_group_id" {
+  type        = string
+  description = "ID of the user group to notify, e.g. usergroup.get filter name=\"Zabbix administrators\"."
+}
+
 resource "zabbix_host_group" "servers" {
   name = "Linux servers"
 }

@@ -394,7 +394,7 @@ func resourceMediaTypeCreate(ctx context.Context, d *schema.ResourceData, m inte
 		return diag.Errorf("creating media type: %s", err)
 	}
 	d.SetId(id)
-	return resourceMediaTypeRead(ctx, d, m)
+	return readAfterCreate(ctx, d, m, resourceMediaTypeRead, "media type")
 }
 
 func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
@@ -515,12 +515,17 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
+	// SDKv2 writes the planned values into state even when Update fails (see
+	// ResourceData.Partial); partial mode preserves the previous state until
+	// the mutation is confirmed, then the final Read refreshes everything.
+	d.Partial(true)
 	mt := expandMediaType(d)
 	mt.MediaTypeID = d.Id()
 	mt.ClearParameters = d.HasChange("type")
 	if err := client.UpdateMediaType(ctx, mt); err != nil {
 		return diag.Errorf("updating media type %s: %s", d.Id(), err)
 	}
+	d.Partial(false)
 	return resourceMediaTypeRead(ctx, d, m)
 }
 
