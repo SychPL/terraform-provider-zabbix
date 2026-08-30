@@ -53,6 +53,10 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C9 | P2 | Serializacja type-aware: wysylane tylko pola wlasciwe dla `type`, `parameters` nigdy `null`, `passwd` tylko przy `smtp_authentication=1` | `TestMediaTypeParams_TypeAware` | DONE |
 | C10 | P2 | `host.update` nigdy nie wysyla `interfaces`; `templates_clear` = stare - nowe | `TestUpdateHost_NoInterfacesAndTemplatesClear` | DONE |
 | C11 | P2 | `eventsource` tylko w `action.create`; `operations`/`conditions` zawsze tablice | `TestActionParams_EventSourceOnlyOnCreate` | DONE |
+| C12 | P1 | Klient nie podaza za redirectami (307/308 powtorzyloby POST z tokenem, mozliwy downgrade do http) | `TestCall_RedirectsAreNotFollowed` | DONE |
+| C13 | P1 | Odpowiedz 200 bez `result` i bez `error` (albo bez `jsonrpc: 2.0`) = blad, nigdy sukces mutacji | `TestCall_MalformedSuccessResponse` | DONE |
+| C14 | P2 | URL z userinfo odrzucany (nie wycieka do diagnostyki); `api_token` weryfikowany w configure przez `user.get` | `TestProviderConfigure_AuthValidation` | DONE |
+| C15 | P3 | Leniwe pierwsze logowanie tez single-flight | `TestCall_LazyFirstLoginIsSingleFlight` | DONE |
 
 Odrzucone z draftu: C6 (lazy login - `terraform validate` nie konfiguruje providera,
 wymaganie bylo sprzeczne z `GetVersion` w configure), `user.logout` (SDKv2 nie ma hooka
@@ -89,7 +93,9 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | M3 | P2 | `parameter.value` i `password` Sensitive; `script` NIE (to kod, sekrety maja byc w parametrach - udokumentowane) | schema; docs | DONE |
 | M4 | P2 | Email: `smtp_port`, `smtp_security`, `smtp_verify_peer/host`, `smtp_authentication`, `username`, `password` -> API `passwd` (API zwraca `passwd`, wiec round-trip i `ImportStateVerify` dzialaja) | `TestAccMediaType_email` | DONE |
 | M5 | P3 | Walidacja w planie: `type` w {0,1,2,4}; pola wymagane per typ; `parameter` tylko dla 4; `password` tylko z `smtp_authentication=1`; `timeout` 1-60s | `TestMediaTypeCustomizeDiff` | DONE |
-| M6 | P3 | Read ustawia tylko pola wlasciwe dla typu, reszta = defaulty (brak perpetual diff po zmianie typu) | `resourceMediaTypeRead` | DONE |
+| M6 | P3 | Read ustawia tylko pola wlasciwe dla typu, reszta = defaulty (brak perpetual diff po zmianie typu) | `TestMediaTypeRead_TypeAwareReset` | DONE |
+| M7 | P2 | Update wysyla pola nieaktywnych typow wyczyszczone (zmiana typu nie zostawia np. `passwd` w Zabbixie - potwierdzone na API) | `TestMediaTypeParams_TypeAware`, `TestAccMediaType_scriptSmsTypeChange` | DONE |
+| M8 | P2 | Jawnie ustawione pola innego typu odrzucane w planie (inaczej bylyby cicho ignorowane) | `TestMediaTypeCustomizeDiff` | DONE |
 
 ### 3.5 `zabbix_action`
 
@@ -102,7 +108,9 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | A5 | P3 | `pause_suppressed`, `notify_if_canceled` jako pola akcji (nie operacji) | round-trip w `TestAccAction_lifecycle` | DONE |
 | A6 | P3 | Read: przy `default_msg=1` `subject`/`message` = "" (Zabbix trzyma stare wartosci, sa bez znaczenia) | krok 2 `TestAccAction_lifecycle`, `TestActionRead_DefaultMsgHidesStaleSubject` | DONE |
 | A7 | P2 | Read odmawia zarzadzania akcja z `operationtype != 0` (update nadpisuje cala liste operacji - cicha utrata) | `TestActionRead_RefusesUnsupportedOperationType` | DONE |
-| A8 | P2 | `condition.value2` (nazwa tagu dla typu 26) wysylane i czytane | `TestActionRead_Mapping`, warunek typu 26 w `TestAccAction_lifecycle` | DONE |
+| A8 | P2 | `condition.value2` (nazwa tagu dla typu 26) wysylane tylko dla typu 26 (API odrzuca dla innych) i walidowane | `TestActionRead_Mapping`, `TestActionCustomizeDiff`, warunek typu 26 w `TestAccAction_lifecycle` | DONE |
+| A9 | P2 | Read odmawia zarzadzania akcja z `eventsource != 0` lub `evaltype = 3` (custom formula bylaby cicho skasowana) | `TestActionRead_RefusesUnsupportedEventSourceAndEvaltype` | DONE |
+| A10 | P2 | `CustomizeDiff` (host, media type, action) pomija walidacje wartosci nieznanych w planie (referencje do innych zasobow) | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
 
 ### 3.6 Provider
 
@@ -120,8 +128,10 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 |---|---|---|---|---|
 | T1 | P1 | Testy jednostkowe na `httptest` (bez sieci) | `go test ./...` < 5 s | DONE |
 | T2 | P1 | Akceptacyjne `resource.Test` per zasob: create/update/import/destroy + scenariusze z AC; unikalne nazwy (`acctest.RandomWithPrefix`); `CheckDestroy` | `TF_ACC=1 go test ./zabbix -run TestAcc` zielone na 6.4.21 | DONE |
-| T3 | P1 | CI na push/PR: gofmt, vet, `go mod tidy` check, `go test -race`, docs drift, job acceptance na docker-compose (`--wait` + healthcheck); actions pinowane po SHA, terraform pinowany; release wywoluje CI (`workflow_call`) jako bramke, GoReleaser pinowany | `.github/workflows/ci.yml`, `release.yml` | DONE |
+| T3 | P1 | CI na push/PR: gofmt, vet, `go mod tidy` check, `go test -race`, docs drift, job acceptance na docker-compose (`--wait` + healthcheck); actions pinowane po SHA, terraform pinowany; release wywoluje CI (`workflow_call`) jako bramke, GoReleaser pinowany | `.github/workflows/ci.yml`, `release.yml`; run 33322303435 na forku SychPL zielony (unit + acceptance) | DONE |
 | T5 | P2 | Testy jednostkowe mapowania API -> stan (Read) na fixture'ach z realnych odpowiedzi 6.4 | `resource_read_test.go` | DONE |
+| T6 | P2 | CI: `govulncheck` (zaleznosci i Go podniesione - 0 znanych podatnosci), `terraform fmt -check examples/`, `goreleaser check` + `build --snapshot --single-target`; release wymaga tagu osiagalnego z `main` i environment `release` | `ci.yml`, `release.yml` | DONE |
+| T7 | P3 | `.goreleaser.yml`: usunieta niewspierana para darwin/arm | `goreleaser check` w CI | DONE |
 | T4 | P3 | `docker-compose.acc.yml` (upstream ignoruje `docker-compose.yml` jako plik lokalny): bez `version:`, obrazy `alpine-6.4.21`, healthchecki, porty na 127.0.0.1 | `docker compose -f docker-compose.acc.yml config` | DONE |
 
 ### 3.8 Dokumentacja
@@ -154,3 +164,7 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   v0.3: blok `interface` (lista).
 - Zabbix 6.4 jest EOL; 7.0 LTS nietestowane (warning). Bearer auth jest gotowe na 7.x.
 - `esc_period` z makrem uzytkownika nie jest walidowane (nie da sie).
+- Namespace: README wskazuje `Tensai123/terraform-provider-zabbix`, `go.mod` i `source` w przykladach
+  `adi/...` - do ujednolicenia przez wlasciciela repo przed pierwszym tagiem (Registry wymaga zgodnosci).
+- Environment `release` wymaga skonfigurowania required reviewers w ustawieniach repo, zeby faktycznie
+  bramkowal uzycie klucza GPG.

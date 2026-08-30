@@ -32,7 +32,10 @@
 
 ### Added
 
-- `api_token` authentication (Bearer header), `tls_insecure`, `ca_cert_file`.
+- `api_token` authentication (Bearer header, validated at provider configure),
+  `tls_insecure`, `ca_cert_file`. HTTP redirects are never followed and
+  malformed JSON-RPC responses are never treated as success; URLs with embedded
+  credentials are rejected.
 - Automatic single re-login when a username/password session expires.
 - `terraform import` for all resources.
 - `timeouts` blocks and context propagation to HTTP requests.
@@ -40,13 +43,20 @@
 - `zabbix_host`: `name`, `enabled`, `description`, `use_ip`, `dns`.
 - `zabbix_media_type`: SMTP port/security/verification/authentication,
   `username`, `password`; sensitive webhook parameter values; plan-time
-  validation per media type.
+  validation per media type (attributes of other types are rejected, a type
+  change clears the previous type's attributes in Zabbix).
 - `zabbix_action`: `users` recipients, `condition.value2` (event tag value
   conditions), `pause_suppressed`, `notify_if_canceled`, validation of
-  escalation steps, periods and recipients. Actions containing operation types
-  the provider does not support are refused instead of silently rewritten.
+  escalation steps, periods and recipients. Actions containing operation types,
+  event sources or custom expressions the provider does not support are refused
+  instead of silently rewritten. Plan-time validation defers values that are
+  not known until apply.
 - Unit tests (mock JSON-RPC server) and acceptance tests against Zabbix 6.4.
 - CI workflow (fmt, vet, race tests, generated docs check, acceptance tests
-  on `docker-compose.acc.yml`), pinned GitHub Actions and GoReleaser; the
-  release workflow runs the full CI gate first.
+  on `docker-compose.acc.yml`, govulncheck, `terraform fmt` on examples,
+  GoReleaser config check and snapshot build), pinned GitHub Actions and
+  GoReleaser; the release workflow runs the full CI gate first, requires the
+  tag to be reachable from `main` and uses a `release` environment.
+- Dependencies updated (terraform-plugin-sdk v2.40, grpc, x/net, x/text) and
+  Go 1.25.13; `govulncheck` reports no known vulnerabilities.
 - Generated documentation in `docs/` and examples in `examples/`.

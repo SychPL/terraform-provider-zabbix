@@ -89,6 +89,9 @@ func resourceHost() *schema.Resource {
 }
 
 func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	if !planKnown(d, "use_ip", "ip", "dns") {
+		return nil
+	}
 	if d.Get("use_ip").(bool) {
 		if d.Get("ip").(string) == "" {
 			return fmt.Errorf("ip is required when use_ip is true")

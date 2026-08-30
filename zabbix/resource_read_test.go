@@ -177,6 +177,25 @@ func TestActionRead_DefaultMsgHidesStaleSubject(t *testing.T) {
 	}
 }
 
+func TestActionRead_RefusesUnsupportedEventSourceAndEvaltype(t *testing.T) {
+	base := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
+	cases := map[string]string{
+		"eventsource": strings.Replace(base, `"eventsource":"0"`, `"eventsource":"1"`, 1),
+		"evaltype":    strings.Replace(base, `"evaltype":"2"`, `"evaltype":"3"`, 1),
+	}
+	for name, fixture := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := fixtureServer(t, "action.get", fixture)
+			d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{})
+			d.SetId("10")
+			diags := resourceAction().ReadContext(context.Background(), d, c)
+			if !diags.HasError() || !strings.Contains(diags[0].Summary, "does not support") || d.Id() != "10" {
+				t.Fatalf("must refuse to manage and keep the ID, got %v id=%q", diags, d.Id())
+			}
+		})
+	}
+}
+
 func TestActionRead_RefusesUnsupportedOperationType(t *testing.T) {
 	// operationtype "1" (remote command) is not supported by the provider.
 	c := fixtureServer(t, "action.get", strings.NewReplacer("%OP%", "1", "%DM%", "1").Replace(actionFixture))

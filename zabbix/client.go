@@ -257,13 +257,19 @@ func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
 	transport.TLSClientConfig = tlsCfg
 
 	return &ZabbixClient{
-		url:        cfg.URL,
-		username:   cfg.Username,
-		password:   cfg.Password,
-		apiToken:   cfg.APIToken,
-		token:      cfg.APIToken,
-		httpClient: &http.Client{Timeout: timeout, Transport: transport},
-		loginSem:   make(chan struct{}, 1),
+		url:      cfg.URL,
+		username: cfg.Username,
+		password: cfg.Password,
+		apiToken: cfg.APIToken,
+		token:    cfg.APIToken,
+		httpClient: &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+			// Never follow redirects: a 307/308 would replay the POST body and the
+			// Authorization header, possibly to a downgraded http:// location.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+		loginSem: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -376,12 +382,25 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 	if rpcResp.Error != nil {
 		return rpcResp.Error
 	}
+	// A JSON-RPC 2.0 success response must carry a result. Anything else (an
+	// HTML login page, an empty body, a proxy stub) must not be mistaken for a
+	// successful mutation.
+	if rpcResp.Jsonrpc != "2.0" || len(rpcResp.Result) == 0 || string(rpcResp.Result) == "null" {
+		return fmt.Errorf("malformed JSON-RPC response from %s for %s: no result and no error", c.url, method)
+	}
 	if result != nil {
 		if err := json.Unmarshal(rpcResp.Result, result); err != nil {
 			return fmt.Errorf("failed to parse result: %w", err)
 		}
 	}
 	return nil
+}
+
+// CheckAuth verifies that the configured credentials are accepted by making
+// a cheap authenticated call.
+func (c *ZabbixClient) CheckAuth(ctx context.Context) error {
+	var res []map[string]string
+	return c.Call(ctx, "user.get", map[string]interface{}{"output": []string{"userid"}, "limit": 1}, &res)
 }
 
 // GetVersion calls apiinfo.version (unauthenticated).
@@ -524,13 +543,29 @@ func (c *ZabbixClient) DeleteHost(ctx context.Context, id string) error {
 
 // --- MEDIA TYPE ---
 
-// mediaTypeParams serialises only the fields relevant for the media type's
-// type; irrelevant fields are neither sent nor cleared.
+// mediaTypeParams serialises the media type. Fields that do not belong to the
+// media type's type are sent with their Zabbix defaults so that a type change
+// clears leftovers (e.g. an SMTP password) instead of leaving them in Zabbix.
 func mediaTypeParams(mt *MediaType) map[string]interface{} {
 	params := map[string]interface{}{
-		"name":   mt.Name,
-		"type":   mt.Type,
-		"status": mt.Status,
+		"name":                mt.Name,
+		"type":                mt.Type,
+		"status":              mt.Status,
+		"smtp_server":         "",
+		"smtp_port":           "25",
+		"smtp_helo":           "",
+		"smtp_email":          "",
+		"smtp_security":       "0",
+		"smtp_verify_peer":    "0",
+		"smtp_verify_host":    "0",
+		"smtp_authentication": "0",
+		"username":            "",
+		"passwd":              "",
+		"exec_path":           "",
+		"gsm_modem":           "",
+		"script":              "",
+		"timeout":             "30s",
+		"parameters":          []MediaTypeParam{},
 	}
 	switch mt.Type {
 	case "0": // Email
@@ -553,11 +588,9 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 	case "4": // Webhook
 		params["script"] = mt.Script
 		params["timeout"] = mt.Timeout
-		p := mt.Parameters
-		if p == nil {
-			p = []MediaTypeParam{}
+		if mt.Parameters != nil {
+			params["parameters"] = mt.Parameters
 		}
-		params["parameters"] = p
 	}
 	return params
 }

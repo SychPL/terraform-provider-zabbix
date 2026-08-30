@@ -3,6 +3,7 @@ package zabbix
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -17,6 +18,10 @@ const (
 	mediaTypeWebhook = 4
 )
 
+// mediaTypeSchema is shared with CustomizeDiff, which compares planned values
+// against the schema defaults.
+var mediaTypeSchema = resourceMediaTypeSchema()
+
 func resourceMediaType() *schema.Resource {
 	return &schema.Resource{
 		Description: "Manages a Zabbix media type (email, script, SMS or webhook). " +
@@ -28,134 +33,138 @@ func resourceMediaType() *schema.Resource {
 		Importer:      passthroughImporter(),
 		Timeouts:      defaultTimeouts(),
 		CustomizeDiff: resourceMediaTypeCustomizeDiff,
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:         schema.TypeString,
-				Required:     true,
-				ValidateFunc: validation.StringIsNotWhiteSpace,
-				Description:  "Name of the media type. Must be unique in Zabbix.",
-			},
-			"type": {
-				Type:         schema.TypeInt,
-				Required:     true,
-				ValidateFunc: validation.IntInSlice([]int{mediaTypeEmail, mediaTypeScript, mediaTypeSMS, mediaTypeWebhook}),
-				Description:  "Transport: 0 - Email, 1 - Script, 2 - SMS, 4 - Webhook.",
-			},
-			"enabled": {
-				Type:        schema.TypeBool,
-				Optional:    true,
-				Default:     true,
-				Description: "Whether the media type is enabled.",
-			},
-			// Email
-			"smtp_server": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "SMTP server address. Required for type 0 (Email).",
-			},
-			"smtp_port": {
-				Type:         schema.TypeInt,
-				Optional:     true,
-				Default:      25,
-				ValidateFunc: validation.IsPortNumber,
-				Description:  "SMTP server port (Email).",
-			},
-			"smtp_helo": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "SMTP HELO. Required for type 0 (Email).",
-			},
-			"smtp_email": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "Sender email address. Required for type 0 (Email).",
-			},
-			"smtp_security": {
-				Type:         schema.TypeInt,
-				Optional:     true,
-				Default:      0,
-				ValidateFunc: validation.IntInSlice([]int{0, 1, 2}),
-				Description:  "SMTP connection security: 0 - none, 1 - STARTTLS, 2 - SSL/TLS (Email).",
-			},
-			"smtp_verify_peer": {
-				Type:        schema.TypeBool,
-				Optional:    true,
-				Default:     false,
-				Description: "Verify the SMTP server certificate (Email).",
-			},
-			"smtp_verify_host": {
-				Type:        schema.TypeBool,
-				Optional:    true,
-				Default:     false,
-				Description: "Verify the SMTP server host name in the certificate (Email).",
-			},
-			"smtp_authentication": {
-				Type:         schema.TypeInt,
-				Optional:     true,
-				Default:      0,
-				ValidateFunc: validation.IntInSlice([]int{0, 1}),
-				Description:  "SMTP authentication: 0 - none, 1 - normal password (Email).",
-			},
-			"username": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "SMTP user name. Only sent when `smtp_authentication` is 1 (Email).",
-			},
-			"password": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Sensitive:   true,
-				Default:     "",
-				Description: "SMTP password. Only sent when `smtp_authentication` is 1 (Email). Stored in the Terraform state; protect the state accordingly.",
-			},
-			// Script
-			"exec_path": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "Script name. Required for type 1 (Script).",
-			},
-			// SMS
-			"gsm_modem": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "GSM modem serial device. Required for type 2 (SMS).",
-			},
-			// Webhook
-			"script": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "",
-				Description: "JavaScript webhook body. Required for type 4 (Webhook). Keep secrets in `parameter` values, not in the script.",
-			},
-			"timeout": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Default:     "30s",
-				Description: "Webhook execution timeout, 1-60s (Webhook).",
-			},
-			"parameter": {
-				Type:        schema.TypeList,
-				Optional:    true,
-				Description: "Webhook input parameters (type 4 only). Values are marked sensitive.",
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"name": {
-							Type:        schema.TypeString,
-							Required:    true,
-							Description: "Parameter name.",
-						},
-						"value": {
-							Type:        schema.TypeString,
-							Required:    true,
-							Sensitive:   true,
-							Description: "Parameter value (may contain macros).",
-						},
+		Schema:        mediaTypeSchema,
+	}
+}
+
+func resourceMediaTypeSchema() map[string]*schema.Schema {
+	return map[string]*schema.Schema{
+		"name": {
+			Type:         schema.TypeString,
+			Required:     true,
+			ValidateFunc: validation.StringIsNotWhiteSpace,
+			Description:  "Name of the media type. Must be unique in Zabbix.",
+		},
+		"type": {
+			Type:         schema.TypeInt,
+			Required:     true,
+			ValidateFunc: validation.IntInSlice([]int{mediaTypeEmail, mediaTypeScript, mediaTypeSMS, mediaTypeWebhook}),
+			Description:  "Transport: 0 - Email, 1 - Script, 2 - SMS, 4 - Webhook.",
+		},
+		"enabled": {
+			Type:        schema.TypeBool,
+			Optional:    true,
+			Default:     true,
+			Description: "Whether the media type is enabled.",
+		},
+		// Email
+		"smtp_server": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "SMTP server address. Required for type 0 (Email).",
+		},
+		"smtp_port": {
+			Type:         schema.TypeInt,
+			Optional:     true,
+			Default:      25,
+			ValidateFunc: validation.IsPortNumber,
+			Description:  "SMTP server port (Email).",
+		},
+		"smtp_helo": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "SMTP HELO. Required for type 0 (Email).",
+		},
+		"smtp_email": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "Sender email address. Required for type 0 (Email).",
+		},
+		"smtp_security": {
+			Type:         schema.TypeInt,
+			Optional:     true,
+			Default:      0,
+			ValidateFunc: validation.IntInSlice([]int{0, 1, 2}),
+			Description:  "SMTP connection security: 0 - none, 1 - STARTTLS, 2 - SSL/TLS (Email).",
+		},
+		"smtp_verify_peer": {
+			Type:        schema.TypeBool,
+			Optional:    true,
+			Default:     false,
+			Description: "Verify the SMTP server certificate (Email).",
+		},
+		"smtp_verify_host": {
+			Type:        schema.TypeBool,
+			Optional:    true,
+			Default:     false,
+			Description: "Verify the SMTP server host name in the certificate (Email).",
+		},
+		"smtp_authentication": {
+			Type:         schema.TypeInt,
+			Optional:     true,
+			Default:      0,
+			ValidateFunc: validation.IntInSlice([]int{0, 1}),
+			Description:  "SMTP authentication: 0 - none, 1 - normal password (Email).",
+		},
+		"username": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "SMTP user name. Only sent when `smtp_authentication` is 1 (Email).",
+		},
+		"password": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Sensitive:   true,
+			Default:     "",
+			Description: "SMTP password. Only sent when `smtp_authentication` is 1 (Email). Stored in the Terraform state; protect the state accordingly.",
+		},
+		// Script
+		"exec_path": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "Script name. Required for type 1 (Script).",
+		},
+		// SMS
+		"gsm_modem": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "GSM modem serial device. Required for type 2 (SMS).",
+		},
+		// Webhook
+		"script": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "",
+			Description: "JavaScript webhook body. Required for type 4 (Webhook). Keep secrets in `parameter` values, not in the script.",
+		},
+		"timeout": {
+			Type:        schema.TypeString,
+			Optional:    true,
+			Default:     "30s",
+			Description: "Webhook execution timeout, 1-60s (Webhook).",
+		},
+		"parameter": {
+			Type:        schema.TypeList,
+			Optional:    true,
+			Description: "Webhook input parameters (type 4 only). Values are marked sensitive.",
+			Elem: &schema.Resource{
+				Schema: map[string]*schema.Schema{
+					"name": {
+						Type:        schema.TypeString,
+						Required:    true,
+						Description: "Parameter name.",
+					},
+					"value": {
+						Type:        schema.TypeString,
+						Required:    true,
+						Sensitive:   true,
+						Description: "Parameter value (may contain macros).",
 					},
 				},
 			},
@@ -163,16 +172,52 @@ func resourceMediaType() *schema.Resource {
 	}
 }
 
+// mediaTypeFields lists the attributes that belong to each media type type.
+var mediaTypeFields = map[int][]string{
+	mediaTypeEmail:   {"smtp_server", "smtp_port", "smtp_helo", "smtp_email", "smtp_security", "smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "password"},
+	mediaTypeScript:  {"exec_path"},
+	mediaTypeSMS:     {"gsm_modem"},
+	mediaTypeWebhook: {"script", "timeout", "parameter"},
+}
+
 func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
-	require := func(field string) error {
-		if d.Get(field).(string) == "" {
-			return fmt.Errorf("%s is required for media type %d", field, d.Get("type").(int))
-		}
+	keys := []string{"type"}
+	for _, fields := range mediaTypeFields {
+		keys = append(keys, fields...)
+	}
+	if !planKnown(d, keys...) {
 		return nil
 	}
 	t := d.Get("type").(int)
-	if t != mediaTypeWebhook && len(d.Get("parameter").([]interface{})) > 0 {
-		return fmt.Errorf("parameter blocks are only supported for type 4 (Webhook)")
+
+	// Attributes of other types set to a non-default value would be silently
+	// dropped (they are cleared in Zabbix and reset by Read); reject them.
+	allowed := map[string]bool{}
+	for _, f := range mediaTypeFields[t] {
+		allowed[f] = true
+	}
+	for _, fields := range mediaTypeFields {
+		for _, f := range fields {
+			if allowed[f] {
+				continue
+			}
+			set := false
+			if f == "parameter" {
+				set = len(d.Get(f).([]interface{})) > 0
+			} else {
+				set = !reflect.DeepEqual(d.Get(f), mediaTypeSchema[f].Default)
+			}
+			if set {
+				return fmt.Errorf("%s is not supported for media type %d and would be ignored", f, t)
+			}
+		}
+	}
+
+	require := func(field string) error {
+		if d.Get(field).(string) == "" {
+			return fmt.Errorf("%s is required for media type %d", field, t)
+		}
+		return nil
 	}
 	switch t {
 	case mediaTypeEmail:

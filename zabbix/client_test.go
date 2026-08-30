@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -149,7 +150,12 @@ func TestCall_BearerHeaderAndUnauthenticatedVersion(t *testing.T) {
 }
 
 func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
+	const parallel = 5
 	var logins atomic.Int32
+	// Barrier: every parallel call must see the expired session before any of
+	// them gets the error, so that they all race for the re-login.
+	var barrier sync.WaitGroup
+	barrier.Add(parallel)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "user.login":
@@ -157,6 +163,8 @@ func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
 			return map[int32]string{1: "tok1", 2: "tok2"}[n], nil
 		case "hostgroup.get":
 			if req.Auth != "Bearer tok2" {
+				barrier.Done()
+				barrier.Wait()
 				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
 			}
 			return []HostGroup{{GroupID: "1", Name: "g"}}, nil
@@ -168,10 +176,10 @@ func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 5 parallel calls hit an expired session: exactly one re-login must happen.
+	// All parallel calls hit an expired session: exactly one re-login must happen.
 	var wg sync.WaitGroup
-	errs := make(chan error, 5)
-	for i := 0; i < 5; i++ {
+	errs := make(chan error, parallel)
+	for i := 0; i < parallel; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -188,6 +196,67 @@ func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
 	}
 	if got := logins.Load(); got != 2 {
 		t.Fatalf("want initial login + exactly one re-login (2), got %d", got)
+	}
+}
+
+func TestCall_LazyFirstLoginIsSingleFlight(t *testing.T) {
+	var logins atomic.Int32
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method == "user.login" {
+			logins.Add(1)
+			time.Sleep(50 * time.Millisecond)
+			return "tok", nil
+		}
+		return []HostGroup{{GroupID: "1", Name: "g"}}, nil
+	})
+	c := newTestClient(t, s, passwordCfg) // no eager Login
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.GetHostGroup(context.Background(), "1"); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := logins.Load(); got != 1 {
+		t.Fatalf("want exactly one lazy login, got %d", got)
+	}
+}
+
+func TestCall_RedirectsAreNotFollowed(t *testing.T) {
+	var followed atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere" {
+			followed.Store(true)
+		}
+		http.Redirect(w, r, "/elsewhere", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+	c, _ := NewZabbixClient(ClientConfig{URL: srv.URL + "/api_jsonrpc.php", APIToken: "secret"})
+
+	_, err := c.GetHostGroup(context.Background(), "1")
+	if err == nil || !strings.Contains(err.Error(), "307") {
+		t.Fatalf("redirect must be reported as an error, got %v", err)
+	}
+	if followed.Load() {
+		t.Fatal("the redirect target must never be requested (would replay the token and body)")
+	}
+}
+
+func TestCall_MalformedSuccessResponse(t *testing.T) {
+	for _, body := range []string{`{}`, `{"jsonrpc":"2.0","id":1}`, `{"jsonrpc":"2.0","result":null,"id":1}`, `{"result":{"hostids":["1"]},"id":1}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+		c, _ := NewZabbixClient(ClientConfig{URL: srv.URL, APIToken: "t"})
+		if err := c.DeleteHost(context.Background(), "1"); err == nil {
+			t.Errorf("body %s: a response without a JSON-RPC 2.0 result must not be treated as success", body)
+		}
+		srv.Close()
 	}
 }
 
@@ -266,20 +335,21 @@ func TestNewZabbixClient_TLS(t *testing.T) {
 }
 
 func TestMediaTypeParams_TypeAware(t *testing.T) {
-	wh := mediaTypeParams(&MediaType{Type: "4", Script: "return 1;", Timeout: "30s"})
+	wh := mediaTypeParams(&MediaType{Type: "4", Script: "return 1;", Timeout: "30s", SMTPServer: "stale", Passwd: "stale"})
 	if p, ok := wh["parameters"].([]MediaTypeParam); !ok || p == nil {
 		t.Errorf("webhook without parameters must send an empty array, got %#v", wh["parameters"])
 	}
-	if _, ok := wh["smtp_server"]; ok {
-		t.Error("webhook must not send smtp fields")
+	// Fields of other types are cleared, never carried over.
+	if wh["smtp_server"] != "" || wh["passwd"] != "" || wh["smtp_port"] != "25" {
+		t.Errorf("webhook must clear email fields, got smtp_server=%v passwd=%v", wh["smtp_server"], wh["passwd"])
 	}
 
-	email := mediaTypeParams(&MediaType{Type: "0", SMTPServer: "mail", SMTPAuthentication: "0", Username: "u", Passwd: "p"})
-	if _, ok := email["passwd"]; ok {
-		t.Error("passwd must not be sent when smtp_authentication is 0")
+	email := mediaTypeParams(&MediaType{Type: "0", SMTPServer: "mail", SMTPAuthentication: "0", Username: "u", Passwd: "p", Script: "stale"})
+	if email["passwd"] != "" || email["username"] != "" {
+		t.Error("credentials must not be sent when smtp_authentication is 0")
 	}
-	if _, ok := email["script"]; ok {
-		t.Error("email must not send webhook fields")
+	if email["script"] != "" || email["smtp_server"] != "mail" {
+		t.Error("email must clear webhook fields and send smtp fields")
 	}
 	emailAuth := mediaTypeParams(&MediaType{Type: "0", SMTPAuthentication: "1", Username: "u", Passwd: "p"})
 	if emailAuth["passwd"] != "p" {

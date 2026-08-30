@@ -13,6 +13,19 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
+// planKnown reports whether every listed attribute is known in the plan.
+// Cross-attribute validation only runs on known values; values referencing
+// other resources are validated by Zabbix at apply time.
+func planKnown(d *schema.ResourceDiff, keys ...string) bool {
+	for _, k := range keys {
+		// For sets/lists the SDK reports the unknown-ness on the count key only.
+		if !d.NewValueKnown(k) || !d.NewValueKnown(k+".#") {
+			return false
+		}
+	}
+	return true
+}
+
 func defaultTimeouts() *schema.ResourceTimeout {
 	t := schema.DefaultTimeout(2 * time.Minute)
 	return &schema.ResourceTimeout{Create: t, Read: t, Update: t, Delete: t}

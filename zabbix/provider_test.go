@@ -32,6 +32,11 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 			return "6.4.21", nil
 		case "user.login":
 			return "tok", nil
+		case "user.get":
+			if req.Auth != "Bearer t" {
+				return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+			}
+			return []map[string]string{{"userid": "1"}}, nil
 		}
 		return nil, nil
 	})
@@ -46,8 +51,10 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 		{"no credentials", map[string]interface{}{"url": s.URL}, "either api_token or both username and password", ""},
 		{"password only", map[string]interface{}{"url": s.URL, "password": "x"}, "either api_token", ""},
 		{"token ok", map[string]interface{}{"url": s.URL, "api_token": "t"}, "", ""},
+		{"token rejected", map[string]interface{}{"url": s.URL, "api_token": "bad"}, "api_token was rejected", ""},
 		{"user+pass ok", map[string]interface{}{"url": s.URL, "username": "u", "password": "p"}, "", ""},
 		{"bad url", map[string]interface{}{"url": "ftp://x", "api_token": "t"}, "not a valid http(s) URL", ""},
+		{"userinfo in url", map[string]interface{}{"url": "https://admin:s3cret@zabbix.example.com/api_jsonrpc.php", "api_token": "t"}, "must not contain user information", ""},
 		{"http loopback no warning", map[string]interface{}{"url": loopback, "api_token": "t"}, "", ""},
 	}
 	for _, tc := range cases {
@@ -75,6 +82,9 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 func TestProviderConfigure_WarnsOnUntestedVersion(t *testing.T) {
 	clearProviderEnv(t)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method == "user.get" {
+			return []map[string]string{{"userid": "1"}}, nil
+		}
 		return "7.0.3", nil
 	})
 	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": s.URL, "api_token": "t"})
@@ -152,6 +162,29 @@ func planDiff(t *testing.T, r *schema.Resource, raw map[string]interface{}) erro
 	return err
 }
 
+// unknown is the marker the SDK uses for values not known at plan time.
+const unknown = "74D93920-ED26-11E3-AC10-0800200C9A66"
+
+func TestCustomizeDiff_UnknownValuesAreDeferred(t *testing.T) {
+	if err := planDiff(t, resourceHost(), map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": unknown}); err != nil {
+		t.Errorf("host with unknown ip must plan: %v", err)
+	}
+	if err := planDiff(t, resourceHost(), map[string]interface{}{"host": "h", "groups": []interface{}{unknown}, "use_ip": false, "dns": unknown}); err != nil {
+		t.Errorf("host with unknown dns must plan: %v", err)
+	}
+	if err := planDiff(t, resourceMediaType(), map[string]interface{}{"name": "m", "type": 4, "script": unknown, "timeout": unknown}); err != nil {
+		t.Errorf("webhook with unknown script must plan: %v", err)
+	}
+	if err := planDiff(t, resourceMediaType(), map[string]interface{}{"name": "m", "type": 0, "smtp_server": unknown, "smtp_helo": "h", "smtp_email": "e"}); err != nil {
+		t.Errorf("email with unknown smtp_server must plan: %v", err)
+	}
+	if err := planDiff(t, resourceAction(), map[string]interface{}{"name": "a",
+		"condition": []interface{}{map[string]interface{}{"conditiontype": 0, "value": unknown}},
+		"operation": []interface{}{map[string]interface{}{"mediatypeid": unknown, "user_groups": unknown}}}); err != nil {
+		t.Errorf("action with unknown references must plan: %v", err)
+	}
+}
+
 func TestHostCustomizeDiff(t *testing.T) {
 	r := resourceHost()
 	groups := []interface{}{"2"}
@@ -186,8 +219,10 @@ func TestMediaTypeCustomizeDiff(t *testing.T) {
 		{"webhook missing script", map[string]interface{}{"name": "m", "type": 4}, "script is required"},
 		{"webhook bad timeout", map[string]interface{}{"name": "m", "type": 4, "script": "x", "timeout": "5m"}, "timeout must be between"},
 		{"parameter on email", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e",
-			"parameter": []interface{}{map[string]interface{}{"name": "a", "value": "b"}}}, "only supported for type 4"},
+			"parameter": []interface{}{map[string]interface{}{"name": "a", "value": "b"}}}, "parameter is not supported for media type 0"},
 		{"unsupported type", map[string]interface{}{"name": "m", "type": 3}, "expected type to be one of"},
+		{"email field on webhook", map[string]interface{}{"name": "m", "type": 4, "script": "x", "smtp_port": 587}, "smtp_port is not supported for media type 4"},
+		{"webhook field on script", map[string]interface{}{"name": "m", "type": 1, "exec_path": "x", "timeout": "10s"}, "timeout is not supported for media type 1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

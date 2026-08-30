@@ -17,6 +17,8 @@ resource "zabbix_host_group" "servers" {
   name = "Linux servers"
 }
 
+# Placeholder webhook so the example is self-contained; see the
+# zabbix_media_type example for a real Slack webhook script.
 resource "zabbix_media_type" "slack" {
   name   = "Slack"
   type   = 4

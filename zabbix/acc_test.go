@@ -398,7 +398,7 @@ func TestAccProvider_APIToken(t *testing.T) {
 	testAccPreCheck(t)
 	c := testAccClient(t)
 	ctx := context.Background()
-	userID := lookupID(t, "user.get", "userid", map[string]interface{}{"username": os.Getenv("ZABBIX_USERNAME")})
+	userID := testAccCurrentUserID(t, c)
 
 	var created map[string][]string
 	if err := c.Call(ctx, "token.create", map[string]interface{}{"name": acctest.RandomWithPrefix("tfacc"), "userid": userID}, &created); err != nil {
@@ -422,10 +422,33 @@ func TestAccProvider_APIToken(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckGone(t, "zabbix_host_group.g", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
 		Steps: []resource.TestStep{
 			{Config: cfg, Check: resource.TestCheckResourceAttr("zabbix_host_group.g", "name", name)},
 		},
 	})
+}
+
+// testAccCurrentUserID resolves the user behind the configured credentials
+// (works for both password sessions and API tokens).
+func testAccCurrentUserID(t *testing.T, c *ZabbixClient) string {
+	t.Helper()
+	ctx := context.Background()
+	params := map[string]string{}
+	if c.apiToken != "" {
+		params["token"] = c.apiToken
+	} else {
+		if err := c.Login(ctx); err != nil {
+			t.Fatal(err)
+		}
+		params["sessionid"] = c.currentToken()
+	}
+	var user map[string]interface{}
+	// user.checkAuthentication must be called without an Authorization header.
+	if err := c.rawCall(ctx, "user.checkAuthentication", params, "", &user); err != nil {
+		t.Fatalf("user.checkAuthentication: %v", err)
+	}
+	return user["userid"].(string)
 }
 
 func TestAccMediaType_scriptSmsTypeChange(t *testing.T) {

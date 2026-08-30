@@ -91,8 +91,12 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		return nil, diag.Errorf("api_token and username/password are mutually exclusive")
 	}
 
-	if u, err := url.Parse(cfg.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, diag.Errorf("url %q is not a valid http(s) URL", cfg.URL)
+	u, err := url.Parse(cfg.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, diag.Errorf("url is not a valid http(s) URL")
+	}
+	if u.User != nil {
+		return nil, diag.Errorf("url must not contain user information; use username/password or api_token instead")
 	}
 	diags = append(diags, plainHTTPWarning(cfg.URL)...)
 
@@ -109,6 +113,12 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 
 	if err := client.Login(ctx); err != nil {
 		return nil, diag.Errorf("failed to authenticate with Zabbix API: %s", err)
+	}
+	if cfg.APIToken != "" {
+		// Sessions are validated by Login; tokens only by an authenticated call.
+		if err := client.CheckAuth(ctx); err != nil {
+			return nil, diag.Errorf("api_token was rejected by the Zabbix API: %s", err)
+		}
 	}
 
 	return client, diags

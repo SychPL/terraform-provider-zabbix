@@ -177,6 +177,9 @@ func resourceAction() *schema.Resource {
 }
 
 func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	if !planKnown(d, "condition", "operation") {
+		return nil
+	}
 	for _, raw := range d.Get("condition").(*schema.Set).List() {
 		c := raw.(map[string]interface{})
 		if c["conditiontype"].(int) == 26 && c["value2"].(string) == "" {
@@ -188,6 +191,12 @@ func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ in
 	}
 	for i, raw := range d.Get("operation").([]interface{}) {
 		op := raw.(map[string]interface{})
+		p := fmt.Sprintf("operation.%d.", i)
+		// A block with unknown values (e.g. a user group created in the same
+		// plan) is validated by Zabbix at apply time.
+		if !planKnown(d, p+"user_groups", p+"users", p+"default_msg", p+"subject", p+"message", p+"esc_step_from", p+"esc_step_to") {
+			continue
+		}
 		if len(setStrings(op["user_groups"]))+len(setStrings(op["users"])) == 0 {
 			return fmt.Errorf("operation.%d: at least one recipient in user_groups or users is required", i)
 		}
@@ -262,6 +271,15 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 	evaltype, err := atoi("filter.evaltype", action.Filter.EvalType)
 	if err != nil {
 		return nil, err
+	}
+	// Refuse to manage what the provider cannot round-trip: action.update
+	// replaces filter and operations wholesale, so a custom formula or a
+	// non-trigger action would be silently rewritten on the next apply.
+	if eventsource != 0 {
+		return nil, fmt.Errorf("action has eventsource %d which this provider does not support (only 0, trigger actions); manage it outside Terraform", eventsource)
+	}
+	if evaltype == 3 {
+		return nil, fmt.Errorf("action uses a custom condition expression (evaltype 3) which this provider does not support; manage it outside Terraform")
 	}
 
 	conds := make([]interface{}, 0, len(action.Filter.Conditions))
