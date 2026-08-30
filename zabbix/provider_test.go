@@ -29,6 +29,22 @@ func TestProviderConfigure_Validation(t *testing.T) {
 			},
 			expectErr: "url must not contain credentials (username/password)",
 		},
+		{
+			name: "Query string in URL",
+			inputRaw: map[string]interface{}{
+				"url":       "http://localhost/zabbix/api_jsonrpc.php?sid=secret",
+				"api_token": "token123",
+			},
+			expectErr: "url must not contain a query string or fragment",
+		},
+		{
+			name: "Fragment in URL",
+			inputRaw: map[string]interface{}{
+				"url":       "http://localhost/zabbix/api_jsonrpc.php#section",
+				"api_token": "token123",
+			},
+			expectErr: "url must not contain a query string or fragment",
+		},
 	}
 
 	for _, tc := range cases {

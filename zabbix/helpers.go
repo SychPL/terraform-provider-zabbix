@@ -70,16 +70,33 @@ func parseZabbixDuration(s string) (int, error) {
 		return 0, fmt.Errorf("invalid duration value: %q", s)
 	}
 
+	const maxSeconds = 10 * 604800 // 10 weeks safety boundary
+
 	switch matches[2] {
 	case "s", "":
+		if val > maxSeconds {
+			return 0, fmt.Errorf("duration %q is too large (max %d seconds)", s, maxSeconds)
+		}
 		return val, nil
 	case "m":
+		if val > maxSeconds/60 {
+			return 0, fmt.Errorf("duration %q is too large (max %d minutes)", s, maxSeconds/60)
+		}
 		return val * 60, nil
 	case "h":
+		if val > maxSeconds/3600 {
+			return 0, fmt.Errorf("duration %q is too large (max %d hours)", s, maxSeconds/3600)
+		}
 		return val * 3600, nil
 	case "d":
+		if val > maxSeconds/86400 {
+			return 0, fmt.Errorf("duration %q is too large (max %d days)", s, maxSeconds/86400)
+		}
 		return val * 86400, nil
 	case "w":
+		if val > maxSeconds/604800 {
+			return 0, fmt.Errorf("duration %q is too large (max %d weeks)", s, maxSeconds/604800)
+		}
 		return val * 604800, nil
 	default:
 		return 0, fmt.Errorf("unsupported duration suffix: %q", matches[2])

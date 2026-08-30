@@ -81,6 +81,9 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	if u.User != nil {
 		return nil, diag.Errorf("url must not contain credentials (username/password)")
 	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return nil, diag.Errorf("url must not contain a query string or fragment")
+	}
 
 	client, err := NewZabbixClient(urlStr, username, password, apiToken, tlsInsecure, caCertFile)
 	if err != nil {

@@ -78,3 +78,42 @@ func TestGetStringList(t *testing.T) {
 		})
 	}
 }
+
+func TestParseZabbixDuration(t *testing.T) {
+	cases := []struct {
+		input     string
+		expected  int
+		expectErr bool
+	}{
+		{"30s", 30, false},
+		{"5m", 300, false},
+		{"2h", 7200, false},
+		{"1d", 86400, false},
+		{"1w", 604800, false},
+		{"10w", 6048000, false},
+		{"{$MACRO}", -1, false},
+		{"abc", 0, true},
+		{"-5", 0, true},
+		{"11w", 0, true},
+		{"71d", 0, true},
+		{"99999999999w", 0, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			actual, err := parseZabbixDuration(tc.input)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got none", tc.input)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for %q: %s", tc.input, err)
+				}
+				if actual != tc.expected {
+					t.Fatalf("expected duration %d, got %d", tc.expected, actual)
+				}
+			}
+		})
+	}
+}
