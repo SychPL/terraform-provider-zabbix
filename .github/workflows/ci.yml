@@ -93,6 +93,10 @@ jobs:
             sleep 5
           done
           docker compose -f docker-compose.acc.yml logs --tail 50 zabbix-server; exit 1
+      - name: Analyze database
+        # A freshly initialised PostgreSQL has no planner statistics; Zabbix's
+        # template unlink queries then take minutes instead of milliseconds.
+        run: docker compose -f docker-compose.acc.yml exec -T zabbix-db psql -U zabbix -q -c "ANALYZE"
       - name: Acceptance tests
         run: go test -count=1 -timeout 30m -run 'TestAcc' -v ./zabbix
       - name: Zabbix logs
