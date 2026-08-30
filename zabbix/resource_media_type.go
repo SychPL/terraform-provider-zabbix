@@ -424,6 +424,24 @@ func validateMediaTypeValues(d *schema.ResourceData) error {
 	return nil
 }
 
+// unmanageableMediaType reports why the object cannot be represented by the
+// provider. Read and the Update preflight refuse exactly the same set: an
+// object that gained an unrepresentable shape between plan and apply must not
+// be mutated (the final Read would refuse it AFTER the damage).
+func unmanageableMediaType(mt *MediaType) (int, error) {
+	mtType, err := atoi("type", mt.Type)
+	if err != nil {
+		return 0, err
+	}
+	if _, ok := mediaTypeFields[mtType]; !ok {
+		return 0, fmt.Errorf("has type %d which this provider does not support", mtType)
+	}
+	if mtType == mediaTypeScript && len(mt.Parameters) > 0 {
+		return 0, fmt.Errorf("is a script media type with parameters, which this provider does not support")
+	}
+	return mtType, nil
+}
+
 // foreignMediaTypeFields rejects attributes of other transports that were
 // written in the configuration. CustomizeDiff performs the same check but
 // must skip it while `type` is unknown at plan time; this runs again on the
@@ -517,15 +535,9 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	// The type decides everything else, so it is validated first; numeric
 	// fields are parsed only for the type they belong to, tolerating empty
 	// values (objects created outside the provider).
-	mtType, err := atoi("type", mt.Type)
+	mtType, err := unmanageableMediaType(mt)
 	if err != nil {
-		return diag.Errorf("media type %s: %s; %s", d.Id(), err, unmanageableHint)
-	}
-	if _, ok := mediaTypeFields[mtType]; !ok {
-		return diag.Errorf("media type %s has type %d which this provider does not support; %s", d.Id(), mtType, unmanageableHint)
-	}
-	if mtType == mediaTypeScript && len(mt.Parameters) > 0 {
-		return diag.Errorf("media type %s is a script media type with parameters, which this provider does not support; %s", d.Id(), unmanageableHint)
+		return diag.Errorf("media type %s %s; %s", d.Id(), err, unmanageableHint)
 	}
 	// Numeric defaults come from the schema (single source); empty API values
 	// (objects created outside the provider) keep the default.
@@ -641,6 +653,9 @@ func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m inte
 			return diag.Errorf("media type %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to refresh and recreate it", d.Id())
 		}
 		return diag.Errorf("reading media type %s: %s", d.Id(), err)
+	}
+	if _, err := unmanageableMediaType(current); err != nil {
+		return diag.Errorf("refusing to update media type %s: it %s; %s", d.Id(), err, unmanageableHint)
 	}
 	mt := expandMediaType(d)
 	mt.MediaTypeID = d.Id()

@@ -568,6 +568,71 @@ func TestHostGroupCreate_AmbiguousOutcomeHint(t *testing.T) {
 	}
 }
 
+func TestExpandHost_NameFollowsResolvedHost(t *testing.T) {
+	// CustomizeDiff cannot normalise the visible name while `host` is unknown
+	// in the plan; expandHost must fall back to the RESOLVED host instead of
+	// the stale name carried in state.
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "resolved-host", "groups": []interface{}{"2"}})
+	if err := d.Set("name", "stale-visible-name"); err != nil {
+		t.Fatal(err)
+	}
+	if spec := expandHost(d); spec.Name != "resolved-host" {
+		t.Fatalf("an unconfigured visible name must follow the resolved host, got %q", spec.Name)
+	}
+}
+
+func TestPartialStateOnFailedUpdates(t *testing.T) {
+	// d.Partial(true) must protect every resource: a failed mutation must not
+	// persist the planned values (here: the planned name).
+	boom := &JsonRpcError{Code: -32500, Message: "Application error.", Data: "boom"}
+	actionBase := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
+	emailFixture := `[{"mediatypeid":"45","type":"0","name":"mail","status":"0",
+		"smtp_server":"mail.x","smtp_port":"587","smtp_helo":"x","smtp_email":"a@x","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"","timeout":"30s","content_type":"1","parameters":[]}]`
+
+	cases := []struct {
+		name     string
+		resource *schema.Resource
+		raw      map[string]interface{}
+		id       string
+		handler  func(req rpcRequest) (interface{}, *JsonRpcError)
+	}{
+		{"host group", resourceHostGroup(), map[string]interface{}{"name": "planned"}, "42",
+			func(req rpcRequest) (interface{}, *JsonRpcError) { return nil, boom }},
+		{"action", resourceAction(), map[string]interface{}{"name": "planned",
+			"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}}, "10",
+			func(req rpcRequest) (interface{}, *JsonRpcError) {
+				if req.Method == "action.get" {
+					return json.RawMessage(actionBase), nil
+				}
+				return nil, boom
+			}},
+		{"media type", resourceMediaType(), map[string]interface{}{"name": "planned", "type": 0,
+			"smtp_server": "mail.x", "smtp_helo": "x", "smtp_email": "a@x"}, "45",
+			func(req rpcRequest) (interface{}, *JsonRpcError) {
+				if req.Method == "mediatype.get" {
+					return json.RawMessage(emailFixture), nil
+				}
+				return nil, boom
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newRPCServer(t, tc.handler)
+			c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+			d := schema.TestResourceDataRaw(t, tc.resource.Schema, tc.raw)
+			d.SetId(tc.id)
+			diags := tc.resource.UpdateContext(context.Background(), d, c)
+			if !diags.HasError() {
+				t.Fatalf("the failing update must surface an error, got %v", diags)
+			}
+			if st := d.State(); st != nil && st.Attributes["name"] == "planned" {
+				t.Fatalf("planned values must not be written to state after a failed update, got %+v", st.Attributes)
+			}
+		})
+	}
+}
+
 func TestHostUpdate_VanishedHost(t *testing.T) {
 	// The host was deleted externally between plan and apply: the error must
 	// say so instead of a bare "object not found", and the ID must survive so
@@ -711,6 +776,30 @@ func TestMediaTypeResource_DeleteIdempotent(t *testing.T) {
 	d.SetId("9")
 	if diags := resourceMediaType().DeleteContext(context.Background(), d, c); diags.HasError() {
 		t.Fatalf("deleting an already removed media type must succeed, got %v", diags)
+	}
+}
+
+func TestMediaTypeUpdate_RefusesExternallyGainedScriptParameters(t *testing.T) {
+	// Parameters appeared on a script media type between plan and apply: the
+	// update must be refused BEFORE mutating (the final Read would refuse the
+	// object only after the rename already happened).
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method != "mediatype.get" {
+			t.Errorf("no mutation expected, got %s", req.Method)
+			return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+		}
+		return json.RawMessage(`[{"mediatypeid":"9","type":"1","name":"s","status":"0",
+			"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+			"smtp_authentication":"0","username":"","passwd":"","exec_path":"x.sh","gsm_modem":"","script":"","timeout":"30s",
+			"parameters":[{"sortorder":"0","value":"{ALERT.SENDTO}"}]}]`), nil
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceMediaType()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"name": "s-renamed", "type": 1, "exec_path": "x.sh"})
+	d.SetId("9")
+	diags := r.UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "script media type with parameters") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+		t.Fatalf("externally gained script parameters must refuse the update, got %v", diags)
 	}
 }
 

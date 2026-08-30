@@ -173,13 +173,13 @@ func resourceAction() *schema.Resource {
 						"user_groups": {
 							Type:        schema.TypeSet,
 							Optional:    true,
-							Elem:        &schema.Schema{Type: schema.TypeString},
+							Elem:        &schema.Schema{Type: schema.TypeString, ValidateFunc: validation.StringIsNotWhiteSpace},
 							Description: "IDs of user groups to notify.",
 						},
 						"users": {
 							Type:        schema.TypeSet,
 							Optional:    true,
-							Elem:        &schema.Schema{Type: schema.TypeString},
+							Elem:        &schema.Schema{Type: schema.TypeString, ValidateFunc: validation.StringIsNotWhiteSpace},
 							Description: "IDs of users to notify.",
 						},
 					},
@@ -243,6 +243,9 @@ func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ in
 					return fmt.Errorf("condition type 4 (trigger severity) requires a value 0-5, got %q", v)
 				}
 			}
+			if ct == 6 && !userMacroRe.MatchString(v) && !timePeriodRe.MatchString(v) {
+				return fmt.Errorf("condition type 6 (time period) requires d-d,hh:mm-hh:mm periods separated by semicolons (or a user macro), got %q", v)
+			}
 		}
 		if ct == 26 && v2 == "" {
 			return fmt.Errorf("condition type 26 (event tag value) requires value2 (the tag name)")
@@ -295,6 +298,9 @@ func validateActionValues(d *schema.ResourceData) error {
 			if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 5 {
 				return fmt.Errorf("condition type 4 (trigger severity) requires a value 0-5, got %q", v)
 			}
+		}
+		if ct == 6 && !userMacroRe.MatchString(v) && !timePeriodRe.MatchString(v) {
+			return fmt.Errorf("condition type 6 (time period) requires d-d,hh:mm-hh:mm periods separated by semicolons (or a user macro), got %q", v)
 		}
 		if ct == 26 && v2 == "" {
 			return fmt.Errorf("condition type 26 (event tag value) requires value2 (the tag name)")

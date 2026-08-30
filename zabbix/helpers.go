@@ -141,6 +141,11 @@ func deleteError(ctx context.Context, err error, confirm func(context.Context) e
 	return err
 }
 
+// timePeriodRe matches the Zabbix time period format used by time-period
+// conditions: "d-d,hh:mm-hh:mm" entries separated by semicolons, e.g.
+// "1-7,00:00-24:00" or "1-5,09:00-18:00;6-7,10:00-16:00".
+var timePeriodRe = regexp.MustCompile(`^[1-7](-[1-7])?,([01]?\d|2[0-3]):[0-5]\d-([01]?\d|2[0-4]):[0-5]\d(;[1-7](-[1-7])?,([01]?\d|2[0-3]):[0-5]\d-([01]?\d|2[0-4]):[0-5]\d)*;?$`)
+
 var userMacroRe = regexp.MustCompile(`^\{\$[A-Z0-9_.]+(:.*)?\}$`)
 var durationRe = regexp.MustCompile(`^(\d+)([smhdw]?)$`)
 

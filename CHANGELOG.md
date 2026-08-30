@@ -85,6 +85,12 @@
   being read as "default message to everyone".
 - A `user.login` response with an empty session token is rejected; requests
   can no longer go out silently unauthenticated.
+- The media type update preflight refuses exactly what Read refuses; an
+  unrepresentable shape gained between plan and apply is no longer mutated.
+- An unconfigured visible host name follows the resolved technical name even
+  when the rename was unknown at plan time.
+- Set elements (group, template, user and user-group IDs) and time-period
+  condition values are validated at plan time.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 

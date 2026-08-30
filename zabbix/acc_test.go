@@ -690,6 +690,40 @@ func TestAccProvider_TLSTerminatedProxy(t *testing.T) {
 	if _, err := plain.GetVersion(ctx); err == nil {
 		t.Fatal("a self-signed certificate must be rejected without ca_cert_file")
 	}
+
+	// The same path through the real provider wiring (schema defaults included).
+	raw := map[string]interface{}{"url": proxy.URL + backend.Path, "ca_cert_file": caPath}
+	d := schema.TestResourceDataRaw(t, Provider().Schema, raw)
+	if _, diags := providerConfigure(ctx, d); diags.HasError() {
+		t.Fatalf("providerConfigure over the TLS proxy failed: %v", diags)
+	}
+}
+
+// TestAccProvider_SessionRelogin invalidates the live session behind the
+// client's back and proves the single-flight re-login against the real API.
+func TestAccProvider_SessionRelogin(t *testing.T) {
+	testAccPreCheck(t)
+	if os.Getenv("ZABBIX_USERNAME") == "" {
+		t.Skip("session re-login requires password credentials")
+	}
+	c, err := NewZabbixClient(ClientConfig{
+		URL:      os.Getenv("ZABBIX_URL"),
+		Username: os.Getenv("ZABBIX_USERNAME"),
+		Password: os.Getenv("ZABBIX_PASSWORD"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := c.Login(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Call(ctx, "user.logout", []interface{}{}, nil); err != nil {
+		t.Fatalf("user.logout: %v", err)
+	}
+	if _, err := c.GetHostGroup(ctx, "1"); err != nil && !errors.Is(err, ErrNotFound) {
+		t.Fatalf("re-login after an invalidated session failed: %v", err)
+	}
 }
 
 // --- provider: API token authentication ---

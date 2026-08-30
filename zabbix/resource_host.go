@@ -58,13 +58,13 @@ func resourceHost() *schema.Resource {
 				Type:        schema.TypeSet,
 				Required:    true,
 				MinItems:    1,
-				Elem:        &schema.Schema{Type: schema.TypeString},
+				Elem:        &schema.Schema{Type: schema.TypeString, ValidateFunc: validation.StringIsNotWhiteSpace},
 				Description: "IDs of the host groups the host belongs to. At least one is required by Zabbix.",
 			},
 			"templates": {
 				Type:        schema.TypeSet,
 				Optional:    true,
-				Elem:        &schema.Schema{Type: schema.TypeString},
+				Elem:        &schema.Schema{Type: schema.TypeString, ValidateFunc: validation.StringIsNotWhiteSpace},
 				Description: "IDs of templates linked to the host. Templates removed from this set are unlinked and their inherited entities cleared.",
 			},
 			"use_ip": {
@@ -161,8 +161,14 @@ func validateHostAddress(raw cty.Value, get func(string) interface{}) error {
 }
 
 func expandHost(d *schema.ResourceData) *HostSpec {
-	name := d.Get("name").(string) // normalised in CustomizeDiff
-	if name == "" {
+	// The visible name follows the technical name unless configured. The
+	// CustomizeDiff normalisation is skipped while `host` is unknown at plan
+	// time, so it is re-derived here from the RESOLVED values: a stale name
+	// from state must not survive a host rename.
+	name := d.Get("name").(string)
+	raw := d.GetRawConfig()
+	nameConfigured := !raw.IsNull() && raw.Type().HasAttribute("name") && !raw.GetAttr("name").IsNull()
+	if name == "" || !nameConfigured {
 		name = d.Get("host").(string)
 	}
 	return &HostSpec{
