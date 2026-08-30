@@ -6,20 +6,39 @@ terraform {
   }
 }
 
+variable "zabbix_url" {
+  type        = string
+  description = "The Zabbix API JSON-RPC URL"
+  default     = "http://localhost:8082/api_jsonrpc.php"
+}
+
+variable "zabbix_username" {
+  type        = string
+  description = "Zabbix API username"
+  default     = "Admin"
+}
+
+variable "zabbix_password" {
+  type        = string
+  description = "Zabbix API password"
+  sensitive   = true
+  default     = "zabbix"
+}
+
 provider "zabbix" {
-  url      = "http://localhost:8082/api_jsonrpc.php"
-  username = "Admin"
-  password = "zabbix"
+  url      = var.zabbix_url
+  username = var.zabbix_username
+  password = var.zabbix_password
 }
 
 resource "zabbix_host_group" "servers" {
-  name = "Local Test Servers Group"
+  name = "Production Servers"
 }
 
-resource "zabbix_host" "test_host" {
-  host   = "local-test-agent-host-updated"
+resource "zabbix_host" "web_server" {
+  host   = "prod-web-01"
   groups = [zabbix_host_group.servers.id]
-  ip     = "192.168.1.5"
+  ip     = "10.0.1.15"
   port   = "10050"
 }
 
