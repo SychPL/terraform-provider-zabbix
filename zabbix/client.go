@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -73,6 +74,67 @@ type HostInterface struct {
 	Port        string `json:"port"`
 }
 
+type MediaType struct {
+	MediaTypeID string           `json:"mediatypeid,omitempty"`
+	Name        string           `json:"name"`
+	Type        string           `json:"type"` // "0" = Email, "1" = Script, "2" = SMS, "4" = Webhook
+	Status      string           `json:"status"` // "0" = enabled, "1" = disabled
+	SMTPServer  string           `json:"smtp_server,omitempty"`
+	SMTPHelo    string           `json:"smtp_helo,omitempty"`
+	SMTPEmail   string           `json:"smtp_email,omitempty"`
+	ExecPath    string           `json:"exec_path,omitempty"`
+	GSMModem    string           `json:"gsm_modem,omitempty"`
+	Script      string           `json:"script,omitempty"`
+	Timeout     string           `json:"timeout,omitempty"`
+	Parameters  []MediaTypeParam `json:"parameters,omitempty"`
+}
+
+type MediaTypeParam struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type Action struct {
+	ActionID    string            `json:"actionid,omitempty"`
+	Name        string            `json:"name"`
+	EventSource string            `json:"eventsource"` // string
+	Status      string            `json:"status"`      // string
+	EscPeriod   string            `json:"esc_period,omitempty"`
+	Filter      ActionFilter      `json:"filter"`
+	Operations  []ActionOperation `json:"operations,omitempty"`
+}
+
+type ActionFilter struct {
+	EvalType   string            `json:"evaltype"` // string
+	Conditions []ActionCondition `json:"conditions"`
+}
+
+type ActionCondition struct {
+	ConditionType string `json:"conditiontype"` // string
+	Operator      string `json:"operator"`      // string
+	Value         string `json:"value"`
+}
+
+type ActionOperation struct {
+	OperationType string                 `json:"operationtype"` // string
+	EscPeriod     string                 `json:"esc_period,omitempty"`
+	EscStepFrom   string                 `json:"esc_step_from,omitempty"`
+	EscStepTo     string                 `json:"esc_step_to,omitempty"`
+	OpMessage     *ActionOpMessage       `json:"opmessage,omitempty"`
+	OpMessageGrp  []ActionOpMessageGrp   `json:"opmessage_grp,omitempty"`
+}
+
+type ActionOpMessage struct {
+	MediaTypeID string `json:"mediatypeid,omitempty"`
+	DefaultMsg  string `json:"default_msg"` // string
+	Subject     string `json:"subject,omitempty"`
+	Message     string `json:"message,omitempty"`
+}
+
+type ActionOpMessageGrp struct {
+	Usrgrpid string `json:"usrgrpid"`
+}
+
 func NewZabbixClient(url, username, password string) *ZabbixClient {
 	return &ZabbixClient{
 		URL:      url,
@@ -94,7 +156,7 @@ func (c *ZabbixClient) Call(method string, params interface{}, result interface{
 	}
 
 	// Attach Auth Token if logged in
-	if c.AuthToken != "" && method != "user.login" {
+	if c.AuthToken != "" && method != "user.login" && method != "apiinfo.version" {
 		reqPayload.Auth = c.AuthToken
 	}
 
@@ -343,4 +405,207 @@ func (c *ZabbixClient) GetVersion() (string, error) {
 		return "", err
 	}
 	return version, nil
+}
+
+// --- MEDIA TYPE CRUD ---
+
+func (c *ZabbixClient) CreateMediaType(mediaType *MediaType) (string, error) {
+	params := map[string]interface{}{
+		"name":   mediaType.Name,
+		"type":   mediaType.Type,
+		"status": mediaType.Status,
+	}
+
+	if mediaType.SMTPServer != "" {
+		params["smtp_server"] = mediaType.SMTPServer
+	}
+	if mediaType.SMTPHelo != "" {
+		params["smtp_helo"] = mediaType.SMTPHelo
+	}
+	if mediaType.SMTPEmail != "" {
+		params["smtp_email"] = mediaType.SMTPEmail
+	}
+	if mediaType.ExecPath != "" {
+		params["exec_path"] = mediaType.ExecPath
+	}
+	if mediaType.GSMModem != "" {
+		params["gsm_modem"] = mediaType.GSMModem
+	}
+	if mediaType.Script != "" {
+		params["script"] = mediaType.Script
+	}
+	if mediaType.Timeout != "" {
+		params["timeout"] = mediaType.Timeout
+	}
+	if len(mediaType.Parameters) > 0 {
+		params["parameters"] = mediaType.Parameters
+	}
+
+	var res map[string][]string
+	err := c.Call("mediatype.create", params, &res)
+	if err != nil {
+		return "", err
+	}
+
+	ids, ok := res["mediatypeids"]
+	if !ok || len(ids) == 0 {
+		return "", fmt.Errorf("no mediatypeids returned from Zabbix")
+	}
+
+	return ids[0], nil
+}
+
+func (c *ZabbixClient) GetMediaType(id string) (*MediaType, error) {
+	params := map[string]interface{}{
+		"mediatypeids":     []string{id},
+		"output":           []string{"mediatypeid", "name", "type", "status", "smtp_server", "smtp_helo", "smtp_email", "exec_path", "gsm_modem", "script", "timeout"},
+		"selectParameters": "extend",
+	}
+
+	var res []MediaType
+	err := c.Call("mediatype.get", params, &res)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) == 0 {
+		return nil, fmt.Errorf("media type %s not found", id)
+	}
+
+	return &res[0], nil
+}
+
+func (c *ZabbixClient) UpdateMediaType(mediaType *MediaType) error {
+	params := map[string]interface{}{
+		"mediatypeid": mediaType.MediaTypeID,
+		"name":        mediaType.Name,
+		"type":        mediaType.Type,
+		"status":      mediaType.Status,
+	}
+
+	if mediaType.SMTPServer != "" {
+		params["smtp_server"] = mediaType.SMTPServer
+	}
+	if mediaType.SMTPHelo != "" {
+		params["smtp_helo"] = mediaType.SMTPHelo
+	}
+	if mediaType.SMTPEmail != "" {
+		params["smtp_email"] = mediaType.SMTPEmail
+	}
+	if mediaType.ExecPath != "" {
+		params["exec_path"] = mediaType.ExecPath
+	}
+	if mediaType.GSMModem != "" {
+		params["gsm_modem"] = mediaType.GSMModem
+	}
+	if mediaType.Script != "" {
+		params["script"] = mediaType.Script
+	}
+	if mediaType.Timeout != "" {
+		params["timeout"] = mediaType.Timeout
+	}
+	// In Zabbix 6.4, updating webhook parameters overwrites them
+	if mediaType.Type == "4" {
+		params["parameters"] = mediaType.Parameters
+	} else {
+		// Non-webhooks should have empty/no parameters passed
+		params["parameters"] = []interface{}{}
+	}
+
+	var res map[string][]string
+	return c.Call("mediatype.update", params, &res)
+}
+
+func (c *ZabbixClient) DeleteMediaType(id string) error {
+	params := []string{id}
+	var res map[string][]string
+	return c.Call("mediatype.delete", params, &res)
+}
+
+// --- ACTION CRUD ---
+
+func (c *ZabbixClient) CreateAction(action *Action) (string, error) {
+	// Build base parameters
+	params := map[string]interface{}{
+		"name":        action.Name,
+		"eventsource": action.EventSource,
+		"status":      action.Status,
+		"filter":      action.Filter,
+		"operations":  action.Operations,
+	}
+
+	if action.EscPeriod != "" {
+		params["esc_period"] = action.EscPeriod
+	}
+
+	// Make sure operations is at least an empty array if empty
+	if len(action.Operations) == 0 {
+		params["operations"] = []interface{}{}
+	}
+
+	debugBytes, _ := json.Marshal(params)
+	fmt.Fprintf(os.Stderr, "[DEBUG ZABBIX] action.create params: %s\n", string(debugBytes))
+
+	var res map[string][]string
+	err := c.Call("action.create", params, &res)
+	if err != nil {
+		return "", err
+	}
+
+	ids, ok := res["actionids"]
+	if !ok || len(ids) == 0 {
+		return "", fmt.Errorf("no actionids returned from Zabbix")
+	}
+
+	return ids[0], nil
+}
+
+func (c *ZabbixClient) GetAction(id string) (*Action, error) {
+	params := map[string]interface{}{
+		"actionids":    []string{id},
+		"output":       []string{"actionid", "name", "eventsource", "status", "esc_period"},
+		"selectFilter": "extend",
+		"selectOperations": "extend",
+	}
+
+	var res []Action
+	err := c.Call("action.get", params, &res)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) == 0 {
+		return nil, fmt.Errorf("action %s not found", id)
+	}
+
+	return &res[0], nil
+}
+
+func (c *ZabbixClient) UpdateAction(action *Action) error {
+	params := map[string]interface{}{
+		"actionid":    action.ActionID,
+		"name":        action.Name,
+		"eventsource": action.EventSource,
+		"status":      action.Status,
+		"filter":      action.Filter,
+		"operations":  action.Operations,
+	}
+
+	if action.EscPeriod != "" {
+		params["esc_period"] = action.EscPeriod
+	}
+
+	// Make sure operations is at least an empty array if empty
+	if len(action.Operations) == 0 {
+		params["operations"] = []interface{}{}
+	}
+
+	var res map[string][]string
+	return c.Call("action.update", params, &res)
+}
+
+func (c *ZabbixClient) DeleteAction(id string) error {
+	params := []string{id}
+	var res map[string][]string
+	return c.Call("action.delete", params, &res)
 }

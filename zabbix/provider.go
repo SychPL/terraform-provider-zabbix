@@ -34,6 +34,8 @@ func Provider() *schema.Provider {
 		ResourcesMap: map[string]*schema.Resource{
 			"zabbix_host_group": resourceHostGroup(),
 			"zabbix_host":       resourceHost(),
+			"zabbix_media_type": resourceMediaType(),
+			"zabbix_action":     resourceAction(),
 		},
 		ConfigureContextFunc: providerConfigure,
 	}

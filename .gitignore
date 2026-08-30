@@ -22,3 +22,12 @@ src/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Terraform files
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Debug and execution logs
+*.log
