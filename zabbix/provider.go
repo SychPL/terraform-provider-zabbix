@@ -242,7 +242,7 @@ func versionDiagnostics(version string) diag.Diagnostics {
 	return diag.Diagnostics{{
 		Severity: diag.Warning,
 		Summary:  "Untested Zabbix version",
-		Detail:   fmt.Sprintf("This provider is tested against Zabbix %s.x; the server reports %s. Some features may behave unexpectedly.", SupportedVersionPrefix, version),
+		Detail:   fmt.Sprintf("This provider is tested against Zabbix %s.x; the server reports %s. Some features may behave unexpectedly; zabbix_action requires 6.4 or newer (pause_symptoms is always sent).", SupportedVersionPrefix, version),
 	}}
 }
 

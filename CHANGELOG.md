@@ -79,6 +79,12 @@
   external type drift between plan and apply cannot leave them behind.
 - Early configure errors (missing credentials, TLS conflicts) still carry the
   plain-HTTP and TLS warnings.
+- Equivalent spellings of the same duration (`3600` vs `1h`) no longer cause
+  a perpetual diff on `esc_period`, `attempt_interval` and `timeout`.
+- An action operation without an `opmessage` object is refused instead of
+  being read as "default message to everyone".
+- A `user.login` response with an empty session token is rejected; requests
+  can no longer go out silently unauthenticated.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 

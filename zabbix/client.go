@@ -405,6 +405,12 @@ func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
 		var token string
 		params := map[string]string{"username": c.username, "password": c.password}
 		err := c.rawCall(loginCtx, "user.login", params, "", &token)
+		if err == nil && token == "" {
+			// A successful-looking login without a session must never publish
+			// an empty token: every later request would silently go out
+			// without an Authorization header.
+			err = errors.New("empty session token returned")
+		}
 		if err != nil {
 			err = fmt.Errorf("user.login failed: %w", err)
 		}

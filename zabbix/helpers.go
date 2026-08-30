@@ -166,6 +166,16 @@ func parseZabbixDuration(s string) (int, error) {
 	return n * mult[m[2]], nil
 }
 
+// suppressEquivalentDuration treats equivalent spellings of the same duration
+// ("3600", "3600s", "1h") as equal: the API may return a different spelling
+// than the configuration, which would otherwise be a perpetual diff that
+// never converges. Macros and unparsable values are never suppressed.
+func suppressEquivalentDuration(_, old, new string, _ *schema.ResourceData) bool {
+	o, err1 := parseZabbixDuration(old)
+	n, err2 := parseZabbixDuration(new)
+	return err1 == nil && err2 == nil && o == n && o >= 0
+}
+
 // validateEscPeriod accepts a duration between 60 seconds and 1 week (or a
 // user macro); used for the action's default step duration.
 func validateEscPeriod(v interface{}, k string) ([]string, []error) {

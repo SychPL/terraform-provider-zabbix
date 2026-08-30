@@ -37,6 +37,9 @@ func testAccPreCheck(t *testing.T) {
 	if os.Getenv("ZABBIX_API_TOKEN") == "" && (os.Getenv("ZABBIX_USERNAME") == "" || os.Getenv("ZABBIX_PASSWORD") == "") {
 		t.Fatal("ZABBIX_API_TOKEN or ZABBIX_USERNAME+ZABBIX_PASSWORD must be set for acceptance tests")
 	}
+	if os.Getenv("ZABBIX_API_TOKEN") != "" && (os.Getenv("ZABBIX_USERNAME") != "" || os.Getenv("ZABBIX_PASSWORD") != "") {
+		t.Fatal("set either ZABBIX_API_TOKEN or ZABBIX_USERNAME+ZABBIX_PASSWORD, not both: the provider rejects two ambient auth methods")
+	}
 }
 
 // testAccClient returns a raw API client for test setup and verification.
@@ -136,6 +139,10 @@ resource "zabbix_host" "h" {
   groups    = [zabbix_host_group.g.id]
   templates = [%q, %q]
   ip        = "192.0.2.10"
+
+  timeouts {
+    create = "10m"
+  }
 }`, name, templateA, templateB)
 	cfgUpdated := base + fmt.Sprintf(`
 resource "zabbix_host" "h" {
@@ -544,6 +551,7 @@ resource "zabbix_action" "act" {
   notify_if_canceled = false
   operation {
     esc_step_to = 0
+    esc_period  = "1800"
     users       = [%q]
   }
 `, adminUser)

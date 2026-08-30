@@ -82,10 +82,11 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Description:  "Maximum number of delivery attempts (1-100).",
 		},
 		"attempt_interval": {
-			Type:        schema.TypeString,
-			Optional:    true,
-			Default:     "10s",
-			Description: "Interval between delivery attempts, 0-1h (e.g. `10s`, `1m`).",
+			Type:             schema.TypeString,
+			Optional:         true,
+			Default:          "10s",
+			DiffSuppressFunc: suppressEquivalentDuration,
+			Description:      "Interval between delivery attempts, 0-1h (e.g. `10s`, `1m`).",
 		},
 		// Email
 		"content_type": {
@@ -181,10 +182,11 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Description: "JavaScript webhook body. Required for type 4 (Webhook). Keep secrets in `parameter` values, not in the script.",
 		},
 		"timeout": {
-			Type:        schema.TypeString,
-			Optional:    true,
-			Default:     "30s",
-			Description: "Webhook execution timeout, 1-60s (Webhook).",
+			Type:             schema.TypeString,
+			Optional:         true,
+			Default:          "30s",
+			DiffSuppressFunc: suppressEquivalentDuration,
+			Description:      "Webhook execution timeout, 1-60s (Webhook).",
 		},
 		"process_tags": {
 			Type:        schema.TypeBool,
@@ -406,6 +408,12 @@ func validateMediaTypeValues(d *schema.ResourceData) error {
 			for _, f := range []string{"event_menu_url", "event_menu_name"} {
 				if err := require(f); err != nil {
 					return err
+				}
+			}
+		} else {
+			for _, f := range []string{"event_menu_url", "event_menu_name"} {
+				if d.Get(f).(string) != "" {
+					return fmt.Errorf("%s requires show_event_menu = true", f)
 				}
 			}
 		}

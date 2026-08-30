@@ -483,6 +483,35 @@ func TestCall_NullErrorMemberIsMalformed(t *testing.T) {
 	}
 }
 
+func TestCall_EmptyLoginTokenRejected(t *testing.T) {
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method == "user.login" {
+			return "", nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, passwordCfg)
+	if err := c.Login(context.Background()); err == nil || !strings.Contains(err.Error(), "empty session token") {
+		t.Fatalf("an empty session token must be rejected, got %v", err)
+	}
+}
+
+func TestCall_OversizedResponseFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(strings.Repeat("a", 32<<20+16)))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewZabbixClient(ClientConfig{URL: srv.URL, APIToken: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetVersion(context.Background()); err == nil || !strings.Contains(err.Error(), "exceeds 32 MiB") {
+		t.Fatalf("an oversized response must fail explicitly, got %v", err)
+	}
+}
+
 func TestRawCall_RequestsAreNotReplayable(t *testing.T) {
 	// The exact request constructor used by rawCall must produce requests that
 	// net/http can never transparently replay.

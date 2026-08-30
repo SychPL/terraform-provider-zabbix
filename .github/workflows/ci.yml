@@ -102,7 +102,7 @@ jobs:
   acceptance:
     name: Acceptance tests (Zabbix 6.4)
     runs-on: ubuntu-latest
-    needs: unit
+    needs: [unit, unit-windows]
     timeout-minutes: 45
     env:
       TF_ACC: "1"

@@ -255,6 +255,18 @@ func TestActionRead_RefusesRecoveryAndUpdateOperations(t *testing.T) {
 	}
 }
 
+func TestActionRead_RefusesOperationWithoutOpMessage(t *testing.T) {
+	base := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
+	fixture := strings.Replace(base, `"opmessage":{"default_msg":"1","subject":"S","message":"M","mediatypeid":"46"},`, ``, 1)
+	c := fixtureServer(t, "action.get", fixture)
+	d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{})
+	d.SetId("10")
+	diags := resourceAction().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "no opmessage") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+		t.Fatalf("an operation without opmessage must be refused, got %v", diags)
+	}
+}
+
 func TestActionRead_RefusesOperationConditions(t *testing.T) {
 	fixture := strings.Replace(strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture),
 		`"opconditions":[]`, `"opconditions":[{"conditiontype":"14","operator":"0","value":"0"}]`, 1)
@@ -534,6 +546,12 @@ func TestMediaTypeApplyValidation_RejectsResolvedConflicts(t *testing.T) {
 	d.SetId("45")
 	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "smtp_authentication = 1") {
 		t.Fatalf("the same conflict must fail before update, got %v", diags)
+	}
+
+	// Event menu fields next to a show_event_menu that resolved to false.
+	raw2 := map[string]interface{}{"name": "m", "type": 4, "script": "x", "event_menu_url": "https://x"}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, raw2), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "requires show_event_menu") {
+		t.Fatalf("event_menu_url with show_event_menu resolved to false must fail, got %v", diags)
 	}
 }
 

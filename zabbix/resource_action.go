@@ -46,11 +46,12 @@ func resourceAction() *schema.Resource {
 				Description: "Whether the action is enabled.",
 			},
 			"esc_period": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Default:      "1h",
-				ValidateFunc: validateEscPeriod,
-				Description:  "Default operation step duration, 60s to 1w, e.g. `1h`.",
+				Type:             schema.TypeString,
+				Optional:         true,
+				Default:          "1h",
+				ValidateFunc:     validateEscPeriod,
+				DiffSuppressFunc: suppressEquivalentDuration,
+				Description:      "Default operation step duration, 60s to 1w, e.g. `1h`.",
 			},
 			"evaltype": {
 				Type:         schema.TypeInt,
@@ -124,11 +125,12 @@ func resourceAction() *schema.Resource {
 							Description:  "Operation type. Only 0 (send message) is supported.",
 						},
 						"esc_period": {
-							Type:         schema.TypeString,
-							Optional:     true,
-							Default:      "0",
-							ValidateFunc: validateOperationEscPeriod,
-							Description:  "Step duration; 0 uses the action's `esc_period`.",
+							Type:             schema.TypeString,
+							Optional:         true,
+							Default:          "0",
+							ValidateFunc:     validateOperationEscPeriod,
+							DiffSuppressFunc: suppressEquivalentDuration,
+							Description:      "Step duration; 0 uses the action's `esc_period`.",
 						},
 						"esc_step_from": {
 							Type:         schema.TypeInt,
@@ -442,6 +444,13 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		for _, u := range o.OpMessageUsr {
 			users = append(users, u.UserID)
 		}
+		if o.OpMessage == nil {
+			// Every "send message" operation carries an opmessage object; a
+			// response without one cannot be represented - refuse, don't guess
+			// (a guessed "default message" would overwrite the real one on the
+			// next update).
+			return nil, fmt.Errorf("action operation has no opmessage object, which this provider cannot represent; %s", unmanageableHint)
+		}
 		flat := map[string]interface{}{
 			"operationtype": opType,
 			"esc_period":    o.EscPeriod,
@@ -449,23 +458,19 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 			"esc_step_to":   to,
 			"user_groups":   groups,
 			"users":         users,
-			"mediatypeid":   "0",
-			"default_msg":   true,
+			"mediatypeid":   o.OpMessage.MediaTypeID,
+			"default_msg":   o.OpMessage.DefaultMsg == "1",
 			"subject":       "",
 			"message":       "",
 		}
-		if o.OpMessage != nil {
-			flat["mediatypeid"] = o.OpMessage.MediaTypeID
-			flat["default_msg"] = o.OpMessage.DefaultMsg == "1"
-			// Zabbix keeps stale subject/message values when default_msg is switched
-			// on; they are meaningless then, so they are not reflected in state.
-			if o.OpMessage.DefaultMsg == "0" {
-				if o.OpMessage.Subject != nil {
-					flat["subject"] = *o.OpMessage.Subject
-				}
-				if o.OpMessage.Message != nil {
-					flat["message"] = *o.OpMessage.Message
-				}
+		// Zabbix keeps stale subject/message values when default_msg is
+		// switched on; they are meaningless then and not reflected in state.
+		if o.OpMessage.DefaultMsg == "0" {
+			if o.OpMessage.Subject != nil {
+				flat["subject"] = *o.OpMessage.Subject
+			}
+			if o.OpMessage.Message != nil {
+				flat["message"] = *o.OpMessage.Message
 			}
 		}
 		ops = append(ops, flat)

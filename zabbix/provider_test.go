@@ -689,6 +689,21 @@ func TestDeleteError(t *testing.T) {
 	}
 }
 
+func TestSuppressEquivalentDuration(t *testing.T) {
+	cases := []struct {
+		old, new string
+		want     bool
+	}{
+		{"1h", "3600", true}, {"3600s", "1h", true}, {"0", "0s", true},
+		{"1h", "3601", false}, {"{$X}", "{$X}", false}, {"1h", "{$X}", false}, {"", "1h", false},
+	}
+	for _, tc := range cases {
+		if got := suppressEquivalentDuration("k", tc.old, tc.new, nil); got != tc.want {
+			t.Errorf("%q vs %q: want %v, got %v", tc.old, tc.new, tc.want, got)
+		}
+	}
+}
+
 func TestParseZabbixDuration(t *testing.T) {
 	cases := map[string]int{"0": 0, "90": 90, "30s": 30, "5m": 300, "1h": 3600, "1d": 86400, "1w": 604800, "{$MACRO}": -1}
 	for in, want := range cases {
