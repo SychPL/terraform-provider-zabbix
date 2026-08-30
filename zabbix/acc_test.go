@@ -383,3 +383,39 @@ resource "zabbix_action" "act" {
 		},
 	})
 }
+
+// --- provider: API token authentication ---
+
+func TestAccProvider_APIToken(t *testing.T) {
+	testAccPreCheck(t)
+	c := testAccClient(t)
+	ctx := context.Background()
+	userID := lookupID(t, "user.get", "userid", map[string]interface{}{"username": os.Getenv("ZABBIX_USERNAME")})
+
+	var created map[string][]string
+	if err := c.Call(ctx, "token.create", map[string]interface{}{"name": acctest.RandomWithPrefix("tfacc"), "userid": userID}, &created); err != nil {
+		t.Fatalf("token.create: %v", err)
+	}
+	tokenID := created["tokenids"][0]
+	t.Cleanup(func() { _ = c.Call(ctx, "token.delete", []string{tokenID}, nil) })
+
+	var generated []map[string]string
+	if err := c.Call(ctx, "token.generate", []string{tokenID}, &generated); err != nil {
+		t.Fatalf("token.generate: %v", err)
+	}
+
+	name := acctest.RandomWithPrefix("tfacc-token-group")
+	cfg := testAccProviderConfig() + fmt.Sprintf(`resource "zabbix_host_group" "g" { name = %q }`, name)
+
+	// Authenticate with the token only; username/password must not leak in.
+	t.Setenv("ZABBIX_API_TOKEN", generated[0]["token"])
+	t.Setenv("ZABBIX_USERNAME", "")
+	t.Setenv("ZABBIX_PASSWORD", "")
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg, Check: resource.TestCheckResourceAttr("zabbix_host_group.g", "name", name)},
+		},
+	})
+}
