@@ -28,11 +28,11 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+      - -s -w -X main.version={{.Version}}
     binary: '{{ .ProjectName }}_v{{ .Version }}'
 
 archives:
-  - format: zip
+  - formats: [zip]
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
 
 checksum:
@@ -49,6 +49,12 @@ signs:
       - "${signature}"
       - "--detach-sign"
       - "${artifact}"
+
+release:
+  extra_files:
+    # Required by the Terraform Registry to publish the provider.
+    - glob: terraform-registry-manifest.json
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
 
 changelog:
   disable: true
