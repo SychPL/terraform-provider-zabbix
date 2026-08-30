@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"time"
@@ -13,13 +12,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func defaultTimeouts() *schema.ResourceTimeout {
 	t := schema.DefaultTimeout(2 * time.Minute)
@@ -137,7 +129,10 @@ func parseZabbixDuration(s string) (int, error) {
 	if m == nil {
 		return 0, fmt.Errorf("%q is not a valid Zabbix duration (e.g. 90, 30s, 5m, 1h, 1d, 1w) or user macro", s)
 	}
-	n, _ := strconv.Atoi(m[1])
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, fmt.Errorf("%q is out of range", s)
+	}
 	mult := map[string]int{"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 	return n * mult[m[2]], nil
 }

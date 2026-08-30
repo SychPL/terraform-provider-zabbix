@@ -86,6 +86,7 @@ Required:
 Optional:
 
 - `operator` (Number) Condition operator, e.g. 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain.
+- `value2` (String) Second value; the tag name for condition type 26 (event tag value).
 
 
 <a id="nestedblock--operation"></a>

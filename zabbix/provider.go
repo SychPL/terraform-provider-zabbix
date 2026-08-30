@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -49,7 +51,7 @@ func Provider() *schema.Provider {
 			"tls_insecure": {
 				Type:          schema.TypeBool,
 				Optional:      true,
-				Default:       false,
+				DefaultFunc:   envBoolDefault("ZABBIX_TLS_INSECURE"),
 				ConflictsWith: []string{"ca_cert_file"},
 				Description:   "Skip TLS certificate verification. Only for testing. Can also be set with `ZABBIX_TLS_INSECURE`.",
 			},
@@ -76,7 +78,7 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		Username:   d.Get("username").(string),
 		Password:   d.Get("password").(string),
 		APIToken:   d.Get("api_token").(string),
-		Insecure:   d.Get("tls_insecure").(bool) || strings.EqualFold(envOr("ZABBIX_TLS_INSECURE", "false"), "true"),
+		Insecure:   d.Get("tls_insecure").(bool),
 		CACertFile: d.Get("ca_cert_file").(string),
 	}
 
@@ -89,15 +91,10 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		return nil, diag.Errorf("api_token and username/password are mutually exclusive")
 	}
 
-	if u, err := url.Parse(cfg.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	if u, err := url.Parse(cfg.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, diag.Errorf("url %q is not a valid http(s) URL", cfg.URL)
-	} else if u.Scheme == "http" && !isLoopback(u.Hostname()) {
-		diags = append(diags, diag.Diagnostic{
-			Severity: diag.Warning,
-			Summary:  "Zabbix API is accessed over plain HTTP",
-			Detail:   fmt.Sprintf("Credentials and API tokens are sent in clear text to %s. Use https:// for anything but local testing.", cfg.URL),
-		})
 	}
+	diags = append(diags, plainHTTPWarning(cfg.URL)...)
 
 	client, err := NewZabbixClient(cfg)
 	if err != nil {
@@ -108,13 +105,7 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	if err != nil {
 		return nil, diag.Errorf("failed to retrieve Zabbix API version from %s: %s", cfg.URL, err)
 	}
-	if !strings.HasPrefix(version, SupportedVersionPrefix+".") {
-		diags = append(diags, diag.Diagnostic{
-			Severity: diag.Warning,
-			Summary:  "Untested Zabbix version",
-			Detail:   fmt.Sprintf("This provider is tested against Zabbix %s.x; the server reports %s. Some features may behave unexpectedly.", SupportedVersionPrefix, version),
-		})
-	}
+	diags = append(diags, versionWarning(version)...)
 
 	if err := client.Login(ctx); err != nil {
 		return nil, diag.Errorf("failed to authenticate with Zabbix API: %s", err)
@@ -125,4 +116,44 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 
 func isLoopback(host string) bool {
 	return host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1"
+}
+
+// plainHTTPWarning warns when credentials would be sent in clear text.
+func plainHTTPWarning(rawURL string) diag.Diagnostics {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "http" || isLoopback(u.Hostname()) {
+		return nil
+	}
+	return diag.Diagnostics{{
+		Severity: diag.Warning,
+		Summary:  "Zabbix API is accessed over plain HTTP",
+		Detail:   fmt.Sprintf("Credentials and API tokens are sent in clear text to %s. Use https:// for anything but local testing.", rawURL),
+	}}
+}
+
+// versionWarning warns when the server is not the tested Zabbix version line.
+func versionWarning(version string) diag.Diagnostics {
+	if strings.HasPrefix(version, SupportedVersionPrefix+".") {
+		return nil
+	}
+	return diag.Diagnostics{{
+		Severity: diag.Warning,
+		Summary:  "Untested Zabbix version",
+		Detail:   fmt.Sprintf("This provider is tested against Zabbix %s.x; the server reports %s. Some features may behave unexpectedly.", SupportedVersionPrefix, version),
+	}}
+}
+
+// envBoolDefault reads a boolean default from the environment; HCL always wins.
+func envBoolDefault(key string) schema.SchemaDefaultFunc {
+	return func() (interface{}, error) {
+		v := os.Getenv(key)
+		if v == "" {
+			return false, nil
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		return b, nil
+	}
 }

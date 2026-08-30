@@ -72,12 +72,11 @@ func TestProviderConfigure_AuthValidation(t *testing.T) {
 	}
 }
 
-func TestProviderConfigure_WarnsOnPlainHTTPAndVersion(t *testing.T) {
+func TestProviderConfigure_WarnsOnUntestedVersion(t *testing.T) {
 	clearProviderEnv(t)
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		return "7.0.3", nil
 	})
-	// httptest listens on 127.0.0.1; rewrite the host so it is not loopback by name.
 	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": s.URL, "api_token": "t"})
 	_, diags := providerConfigure(context.Background(), d)
 	if diags.HasError() {
@@ -89,6 +88,47 @@ func TestProviderConfigure_WarnsOnPlainHTTPAndVersion(t *testing.T) {
 	}
 	if !contains(summaries, "Untested Zabbix version") {
 		t.Errorf("want version warning, got %v", summaries)
+	}
+}
+
+func TestPlainHTTPWarning(t *testing.T) {
+	if w := plainHTTPWarning("http://zabbix.example.com/api_jsonrpc.php"); len(w) != 1 || w[0].Summary != "Zabbix API is accessed over plain HTTP" {
+		t.Errorf("remote http must warn, got %v", w)
+	}
+	for _, u := range []string{"https://zabbix.example.com/api_jsonrpc.php", "http://localhost:8082/api_jsonrpc.php", "http://127.0.0.1/api_jsonrpc.php"} {
+		if w := plainHTTPWarning(u); len(w) != 0 {
+			t.Errorf("%s must not warn, got %v", u, w)
+		}
+	}
+	if w := versionWarning("6.4.21"); len(w) != 0 {
+		t.Errorf("6.4.x must not warn, got %v", w)
+	}
+	if w := versionWarning("6.0.30"); len(w) != 1 {
+		t.Errorf("6.0.x must warn")
+	}
+}
+
+func TestEnvBoolDefault(t *testing.T) {
+	t.Setenv("ZABBIX_TLS_INSECURE", "")
+	if v, err := envBoolDefault("ZABBIX_TLS_INSECURE")(); err != nil || v != false {
+		t.Errorf("unset: want false, got %v %v", v, err)
+	}
+	for _, s := range []string{"1", "true", "TRUE"} {
+		t.Setenv("ZABBIX_TLS_INSECURE", s)
+		if v, err := envBoolDefault("ZABBIX_TLS_INSECURE")(); err != nil || v != true {
+			t.Errorf("%q: want true, got %v %v", s, v, err)
+		}
+	}
+	t.Setenv("ZABBIX_TLS_INSECURE", "yes")
+	if _, err := envBoolDefault("ZABBIX_TLS_INSECURE")(); err == nil {
+		t.Error("invalid boolean must fail")
+	}
+
+	// Explicit HCL value wins over the environment.
+	t.Setenv("ZABBIX_TLS_INSECURE", "true")
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": "https://x", "api_token": "t", "tls_insecure": false})
+	if d.Get("tls_insecure").(bool) {
+		t.Error("tls_insecure = false in config must override ZABBIX_TLS_INSECURE=true")
 	}
 }
 
@@ -183,6 +223,9 @@ func TestActionCustomizeDiff(t *testing.T) {
 		{"esc_period macro ok", map[string]interface{}{"name": "a", "esc_period": "{$ESC}"}, ""},
 		{"evaltype custom unsupported", map[string]interface{}{"name": "a", "evaltype": 3}, "expected evaltype"},
 		{"eventsource unsupported", map[string]interface{}{"name": "a", "eventsource": 1}, "expected eventsource"},
+		{"value2 without tag type", map[string]interface{}{"name": "a", "condition": []interface{}{map[string]interface{}{"conditiontype": 0, "value": "1", "value2": "x"}}}, "only supported for condition type 26"},
+		{"tag type without value2", map[string]interface{}{"name": "a", "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "value": "prod"}}}, "requires value2"},
+		{"tag type ok", map[string]interface{}{"name": "a", "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "operator": 2, "value": "prod", "value2": "env"}}}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -233,7 +276,7 @@ func TestParseZabbixDuration(t *testing.T) {
 			t.Errorf("%q: want %d, got %d (%v)", in, want, got, err)
 		}
 	}
-	for _, bad := range []string{"", "1x", "abc", "-5", "1h30m"} {
+	for _, bad := range []string{"", "1x", "abc", "-5", "1h30m", "99999999999999999999"} {
 		if _, err := parseZabbixDuration(bad); err == nil {
 			t.Errorf("%q: want error", bad)
 		}

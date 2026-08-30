@@ -90,6 +90,12 @@ func resourceAction() *schema.Resource {
 							Required:    true,
 							Description: "Value to compare with.",
 						},
+						"value2": {
+							Type:        schema.TypeString,
+							Optional:    true,
+							Default:     "",
+							Description: "Second value; the tag name for condition type 26 (event tag value).",
+						},
 					},
 				},
 			},
@@ -171,6 +177,15 @@ func resourceAction() *schema.Resource {
 }
 
 func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	for _, raw := range d.Get("condition").(*schema.Set).List() {
+		c := raw.(map[string]interface{})
+		if c["conditiontype"].(int) == 26 && c["value2"].(string) == "" {
+			return fmt.Errorf("condition type 26 (event tag value) requires value2 (the tag name)")
+		}
+		if c["conditiontype"].(int) != 26 && c["value2"].(string) != "" {
+			return fmt.Errorf("value2 is only supported for condition type 26 (event tag value)")
+		}
+	}
 	for i, raw := range d.Get("operation").([]interface{}) {
 		op := raw.(map[string]interface{})
 		if len(setStrings(op["user_groups"]))+len(setStrings(op["users"])) == 0 {
@@ -208,6 +223,7 @@ func expandAction(d *schema.ResourceData) *Action {
 			ConditionType: strconv.Itoa(c["conditiontype"].(int)),
 			Operator:      strconv.Itoa(c["operator"].(int)),
 			Value:         c["value"].(string),
+			Value2:        c["value2"].(string),
 		})
 	}
 
@@ -258,7 +274,7 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		conds = append(conds, map[string]interface{}{"conditiontype": ct, "operator": op, "value": c.Value})
+		conds = append(conds, map[string]interface{}{"conditiontype": ct, "operator": op, "value": c.Value, "value2": c.Value2})
 	}
 
 	ops := make([]interface{}, 0, len(action.Operations))
@@ -266,6 +282,11 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		opType, err := atoi("operationtype", o.OperationType)
 		if err != nil {
 			return nil, err
+		}
+		if opType != 0 {
+			// Refuse to manage rather than silently drop the operation on the next
+			// update (action.update replaces the whole operations list).
+			return nil, fmt.Errorf("action contains an operation of type %d which this provider does not support (only 0, send message); manage it outside Terraform", opType)
 		}
 		from, err := atoi("esc_step_from", o.EscStepFrom)
 		if err != nil {

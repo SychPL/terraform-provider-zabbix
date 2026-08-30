@@ -1,0 +1,21 @@
+---
+page_title: "{{.ProviderShortName}} Provider"
+subcategory: ""
+description: |-
+  Manage Zabbix host groups, hosts, media types and actions through the Zabbix JSON-RPC API.
+---
+
+# {{.ProviderShortName}} Provider
+
+Manages Zabbix objects through the JSON-RPC API. Tested against Zabbix 6.4.
+
+Authenticate with an API token (`api_token`, recommended) or with `username` and
+`password`. All arguments can also be provided through `ZABBIX_*` environment
+variables. Sensitive values are masked in CLI output but stored in the Terraform
+state.
+
+## Example Usage
+
+{{tffile "examples/provider/provider.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

@@ -294,6 +294,7 @@ resource "zabbix_media_type" "mail" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckGone(t, "zabbix_media_type.mail", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
 		Steps: []resource.TestStep{
 			{Config: cfg, Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "enabled", "false"),
@@ -342,6 +343,13 @@ resource "zabbix_action" "act" {
     conditiontype = 0
     value         = zabbix_host_group.a.id
   }
+  # Event tag value "env" contains "prod"
+  condition {
+    conditiontype = 26
+    operator      = 2
+    value         = "prod"
+    value2        = "env"
+  }
 %s}`, n, ops)
 	}
 	opsBoth := fmt.Sprintf(`
@@ -367,7 +375,7 @@ resource "zabbix_action" "act" {
 		CheckDestroy:      testAccCheckGone(t, "zabbix_action.act", func(c *ZabbixClient, id string) error { _, err := c.GetAction(context.Background(), id); return err }),
 		Steps: []resource.TestStep{
 			{Config: cfg(name, opsBoth), Check: resource.ComposeTestCheckFunc(
-				resource.TestCheckResourceAttr("zabbix_action.act", "condition.#", "3"),
+				resource.TestCheckResourceAttr("zabbix_action.act", "condition.#", "4"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.user_groups.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.users.#", "1"),
 				resource.TestCheckResourceAttr("zabbix_action.act", "operation.0.subject", "{TRIGGER.NAME}"),
@@ -416,6 +424,52 @@ func TestAccProvider_APIToken(t *testing.T) {
 		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{Config: cfg, Check: resource.TestCheckResourceAttr("zabbix_host_group.g", "name", name)},
+		},
+	})
+}
+
+func TestAccMediaType_scriptSmsTypeChange(t *testing.T) {
+	name := acctest.RandomWithPrefix("tfacc-mt")
+	cfg := func(body string) string {
+		return testAccProviderConfig() + fmt.Sprintf(`
+resource "zabbix_media_type" "mt" {
+  name = %q
+%s}`, name, body)
+	}
+	script := `
+  type      = 1
+  exec_path = "notify.sh"
+`
+	sms := `
+  type      = 2
+  gsm_modem = "/dev/ttyS0"
+`
+	webhook := `
+  type   = 4
+  script = "return 'OK';"
+`
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckGone(t, "zabbix_media_type.mt", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
+		Steps: []resource.TestStep{
+			{Config: cfg(script), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "type", "1"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "exec_path", "notify.sh"),
+			)},
+			{ResourceName: "zabbix_media_type.mt", ImportState: true, ImportStateVerify: true},
+			// Type changes must not leave stale attributes of the previous type in state.
+			{Config: cfg(sms), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "type", "2"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "gsm_modem", "/dev/ttyS0"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "exec_path", ""),
+			)},
+			{ResourceName: "zabbix_media_type.mt", ImportState: true, ImportStateVerify: true},
+			{Config: cfg(webhook), Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "type", "4"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "gsm_modem", ""),
+				resource.TestCheckResourceAttr("zabbix_media_type.mt", "parameter.#", "0"),
+			)},
 		},
 	})
 }

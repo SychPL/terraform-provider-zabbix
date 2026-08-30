@@ -41,9 +41,12 @@
 - `zabbix_media_type`: SMTP port/security/verification/authentication,
   `username`, `password`; sensitive webhook parameter values; plan-time
   validation per media type.
-- `zabbix_action`: `users` recipients, `pause_suppressed`,
-  `notify_if_canceled`, validation of escalation steps, periods and recipients.
+- `zabbix_action`: `users` recipients, `condition.value2` (event tag value
+  conditions), `pause_suppressed`, `notify_if_canceled`, validation of
+  escalation steps, periods and recipients. Actions containing operation types
+  the provider does not support are refused instead of silently rewritten.
 - Unit tests (mock JSON-RPC server) and acceptance tests against Zabbix 6.4.
 - CI workflow (fmt, vet, race tests, generated docs check, acceptance tests
-  on docker-compose), pinned GitHub Actions.
+  on `docker-compose.acc.yml`), pinned GitHub Actions and GoReleaser; the
+  release workflow runs the full CI gate first.
 - Generated documentation in `docs/` and examples in `examples/`.

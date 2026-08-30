@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -34,8 +33,8 @@ const (
 	objectMissing = "No permissions to referred object or it does not exist!"
 )
 
-// version is set at build time via -ldflags "-X main.version=..." and is
-// forwarded from main; it is reported in the User-Agent header.
+// Version is set by main from -ldflags "-X main.version=..." and reported in
+// the User-Agent header.
 var Version = "dev"
 
 type ClientConfig struct {
@@ -55,8 +54,11 @@ type ZabbixClient struct {
 	apiToken   string
 	httpClient *http.Client
 
-	mu    sync.Mutex
+	mu    sync.Mutex // guards token
 	token string
+	// loginSem serialises re-login attempts (single-flight). A channel instead
+	// of a mutex so that waiters can give up when their context is cancelled.
+	loginSem chan struct{}
 }
 
 type jsonRpcRequest struct {
@@ -199,6 +201,7 @@ type ActionCondition struct {
 	ConditionType string `json:"conditiontype"`
 	Operator      string `json:"operator"`
 	Value         string `json:"value"`
+	Value2        string `json:"value2,omitempty"` // tag name for "event tag value" conditions; rejected by the API for other types
 }
 
 type ActionOperation struct {
@@ -260,6 +263,7 @@ func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
 		apiToken:   cfg.APIToken,
 		token:      cfg.APIToken,
 		httpClient: &http.Client{Timeout: timeout, Transport: transport},
+		loginSem:   make(chan struct{}, 1),
 	}, nil
 }
 
@@ -303,10 +307,15 @@ func (c *ZabbixClient) Call(ctx context.Context, method string, params interface
 
 // login obtains a new session token. staleToken is the token that was observed
 // to be invalid; if another goroutine already replaced it, login is skipped.
+// Only one login runs at a time; other callers wait for it or for their ctx.
 func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.token != staleToken {
+	select {
+	case c.loginSem <- struct{}{}:
+		defer func() { <-c.loginSem }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if c.currentToken() != staleToken {
 		return nil
 	}
 	var token string
@@ -314,7 +323,9 @@ func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
 	if err := c.rawCall(ctx, "user.login", params, "", &token); err != nil {
 		return fmt.Errorf("user.login failed: %w", err)
 	}
+	c.mu.Lock()
 	c.token = token
+	c.mu.Unlock()
 	return nil
 }
 
@@ -353,7 +364,9 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected http status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
+		// The body is deliberately not included: a misbehaving proxy could echo
+		// the request (and its credentials) back into Terraform's diagnostics.
+		return fmt.Errorf("unexpected http status %d (%s) from %s", resp.StatusCode, http.StatusText(resp.StatusCode), c.url)
 	}
 
 	var rpcResp jsonRpcResponse

@@ -45,9 +45,9 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 |---|---|---|---|---|
 | C1 | P1 | `Get*` zwracaja `ErrNotFound` tylko przy pustym wyniku; inne bledy propagowane | `TestGetHostGroup_NotFoundVsError`, `TestCall_HTTPErrorIsNotNotFound` | DONE |
 | C2 | P2 | `context.Context` przez `NewRequestWithContext`; anulowanie przerywa zadanie | `TestCall_ContextCancelled` | DONE |
-| C3 | P2 | Re-login po `Session terminated, re-login, please.` tylko dla auth haslem, single-flight pod mutexem, dokladnie 1 `user.login` dla N rownoleglych wywolan; brak retry mutacji po bledzie transportu | `TestCall_ReloginOnceOnSessionExpiry`, `TestCall_NoReloginWithAPIToken` | DONE |
+| C3 | P2 | Re-login po `Session terminated, re-login, please.` tylko dla auth haslem, single-flight (semafor respektujacy ctx, mutex tylko na token), dokladnie 1 `user.login` dla N rownoleglych wywolan; brak retry mutacji po bledzie transportu | `TestCall_ReloginOnceOnSessionExpiry`, `TestCall_NoReloginWithAPIToken` | DONE |
 | C4 | P2 | `api_token` (Bearer), XOR z `username`+`password`; `apiinfo.version` bez auth z `[]` | `TestCall_BearerHeaderAndUnauthenticatedVersion`, `TestProviderConfigure_AuthValidation` | DONE |
-| C5 | P2 | `tls_insecure`, `ca_cert_file` (konflikt), bledny/nieistniejacy PEM = blad, self-signed odrzucany bez CA i akceptowany z CA | `TestNewZabbixClient_TLS` | DONE |
+| C5 | P2 | `tls_insecure` (env `ZABBIX_TLS_INSECURE` przez `DefaultFunc` + `ParseBool`, HCL ma pierwszenstwo), `ca_cert_file` (konflikt), bledny/nieistniejacy PEM = blad, self-signed odrzucany bez CA i akceptowany z CA; body odpowiedzi HTTP nigdy w diagnostyce | `TestNewZabbixClient_TLS`, `TestEnvBoolDefault` | DONE |
 | C7 | P1 | Zero logowania payloadow/sekretow (`os.Stderr`, `fmt.Fprint`, `log.`) | `grep -rnE "os.Stderr|os.Stdout|fmt.Fprint|\blog\." zabbix/*.go` pusty (bez testow) | DONE |
 | C8 | P3 | `selectHostGroups` + mapowanie `hostgroups`; interfejsy z `type,main,useip,ip,dns,port` | `TestAccHost_lifecycle` (grupy w stanie po imporcie) | DONE |
 | C9 | P2 | Serializacja type-aware: wysylane tylko pola wlasciwe dla `type`, `parameters` nigdy `null`, `passwd` tylko przy `smtp_authentication=1` | `TestMediaTypeParams_TypeAware` | DONE |
@@ -100,7 +100,9 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | A3 | P2 | `operationtype` tylko 0; `evaltype` w {0,1,2}; kazda operacja >= 1 odbiorca; `subject`/`message` tylko z `default_msg=false` (API odrzuca inaczej); `esc_step_to` 0 lub >= `esc_step_from`; `esc_period` 0 lub >= 60s | `TestActionCustomizeDiff`, `TestParseZabbixDuration` | DONE |
 | A4 | P2 | `users` -> `opmessage_usr`; `opmessage_grp`/`opmessage_usr` ZAWSZE wysylane (rowniez puste) - Zabbix zachowuje starych odbiorcow gdy pole pominiete (potwierdzone testem) | krok 2 `TestAccAction_lifecycle` (grupy usuniete, user zostaje) | DONE |
 | A5 | P3 | `pause_suppressed`, `notify_if_canceled` jako pola akcji (nie operacji) | round-trip w `TestAccAction_lifecycle` | DONE |
-| A6 | P3 | Read: przy `default_msg=1` `subject`/`message` = "" (Zabbix trzyma stare wartosci, sa bez znaczenia) | krok 2 `TestAccAction_lifecycle` | DONE |
+| A6 | P3 | Read: przy `default_msg=1` `subject`/`message` = "" (Zabbix trzyma stare wartosci, sa bez znaczenia) | krok 2 `TestAccAction_lifecycle`, `TestActionRead_DefaultMsgHidesStaleSubject` | DONE |
+| A7 | P2 | Read odmawia zarzadzania akcja z `operationtype != 0` (update nadpisuje cala liste operacji - cicha utrata) | `TestActionRead_RefusesUnsupportedOperationType` | DONE |
+| A8 | P2 | `condition.value2` (nazwa tagu dla typu 26) wysylane i czytane | `TestActionRead_Mapping`, warunek typu 26 w `TestAccAction_lifecycle` | DONE |
 
 ### 3.6 Provider
 
@@ -118,7 +120,8 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 |---|---|---|---|---|
 | T1 | P1 | Testy jednostkowe na `httptest` (bez sieci) | `go test ./...` < 5 s | DONE |
 | T2 | P1 | Akceptacyjne `resource.Test` per zasob: create/update/import/destroy + scenariusze z AC; unikalne nazwy (`acctest.RandomWithPrefix`); `CheckDestroy` | `TF_ACC=1 go test ./zabbix -run TestAcc` zielone na 6.4.21 | DONE |
-| T3 | P1 | CI na push/PR: gofmt, vet, `go mod tidy` check, `go test -race`, docs drift, job acceptance na docker-compose (`--wait` + healthcheck); actions pinowane po SHA | `.github/workflows/ci.yml` | DONE (do potwierdzenia na GitHub po push) |
+| T3 | P1 | CI na push/PR: gofmt, vet, `go mod tidy` check, `go test -race`, docs drift, job acceptance na docker-compose (`--wait` + healthcheck); actions pinowane po SHA, terraform pinowany; release wywoluje CI (`workflow_call`) jako bramke, GoReleaser pinowany | `.github/workflows/ci.yml`, `release.yml` | DONE |
+| T5 | P2 | Testy jednostkowe mapowania API -> stan (Read) na fixture'ach z realnych odpowiedzi 6.4 | `resource_read_test.go` | DONE |
 | T4 | P3 | `docker-compose.acc.yml` (upstream ignoruje `docker-compose.yml` jako plik lokalny): bez `version:`, obrazy `alpine-6.4.21`, healthchecki, porty na 127.0.0.1 | `docker compose -f docker-compose.acc.yml config` | DONE |
 
 ### 3.8 Dokumentacja
