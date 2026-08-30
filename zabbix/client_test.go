@@ -199,6 +199,51 @@ func TestCall_ReloginOnceOnSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestCall_FailedReloginIsSharedByWaiters(t *testing.T) {
+	const parallel = 5
+	var logins atomic.Int32
+	var barrier sync.WaitGroup
+	barrier.Add(parallel)
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "user.login":
+			if logins.Add(1) == 1 {
+				return "tok1", nil
+			}
+			return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: "Incorrect user name or password or account is temporarily blocked."}
+		default:
+			barrier.Done()
+			barrier.Wait()
+			return nil, &JsonRpcError{Code: -32602, Message: "Invalid params.", Data: sessionTerminated}
+		}
+	})
+	c := newTestClient(t, s, passwordCfg)
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.GetHostGroup(context.Background(), "1"); err == nil || !strings.Contains(err.Error(), "user.login failed") {
+				t.Errorf("want shared login failure, got %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := logins.Load(); got != 2 {
+		t.Fatalf("a failed re-login must be shared: want 1 initial + 1 failed login, got %d", got)
+	}
+}
+
+func TestMediaTypeParams_ScriptParametersUntouched(t *testing.T) {
+	p := mediaTypeParams(&MediaType{Type: "1", ExecPath: "x.sh"})
+	if _, ok := p["parameters"]; ok {
+		t.Error("script media types must not send parameters (sortorder/value are not modelled)")
+	}
+}
+
 func TestCall_LazyFirstLoginIsSingleFlight(t *testing.T) {
 	var logins atomic.Int32
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {

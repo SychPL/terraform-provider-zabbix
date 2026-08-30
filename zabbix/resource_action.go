@@ -176,6 +176,10 @@ func resourceAction() *schema.Resource {
 	}
 }
 
+// unmanageableHint tells the user how to detach an object the provider refuses
+// to manage (Read runs on refresh, so plan and destroy are affected too).
+const unmanageableHint = "manage it outside Terraform (terraform state rm <address>) or adjust it in Zabbix so the provider can represent it"
+
 func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
 	if !planKnown(d, "condition", "operation") {
 		return nil
@@ -276,10 +280,10 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 	// replaces filter and operations wholesale, so a custom formula or a
 	// non-trigger action would be silently rewritten on the next apply.
 	if eventsource != 0 {
-		return nil, fmt.Errorf("action has eventsource %d which this provider does not support (only 0, trigger actions); manage it outside Terraform", eventsource)
+		return nil, fmt.Errorf("action has eventsource %d which this provider does not support (only 0, trigger actions); %s", eventsource, unmanageableHint)
 	}
 	if evaltype == 3 {
-		return nil, fmt.Errorf("action uses a custom condition expression (evaltype 3) which this provider does not support; manage it outside Terraform")
+		return nil, fmt.Errorf("action uses a custom condition expression (evaltype 3) which this provider does not support; %s", unmanageableHint)
 	}
 
 	conds := make([]interface{}, 0, len(action.Filter.Conditions))
@@ -304,7 +308,10 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		if opType != 0 {
 			// Refuse to manage rather than silently drop the operation on the next
 			// update (action.update replaces the whole operations list).
-			return nil, fmt.Errorf("action contains an operation of type %d which this provider does not support (only 0, send message); manage it outside Terraform", opType)
+			return nil, fmt.Errorf("action contains an operation of type %d which this provider does not support (only 0, send message); %s", opType, unmanageableHint)
+		}
+		if len(o.OpConditions) > 0 {
+			return nil, fmt.Errorf("action contains an operation with operation conditions (opconditions) which this provider does not support; %s", unmanageableHint)
 		}
 		from, err := atoi("esc_step_from", o.EscStepFrom)
 		if err != nil {

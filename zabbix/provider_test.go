@@ -185,6 +185,32 @@ func TestCustomizeDiff_UnknownValuesAreDeferred(t *testing.T) {
 	}
 }
 
+func TestHostCustomizeDiff_ImportedHostWithoutAgentInterface(t *testing.T) {
+	r := resourceHost()
+	// State of an imported SNMP-only host: no ip, use_ip defaults to true.
+	state := &terraform.InstanceState{ID: "1", Attributes: map[string]string{
+		"host": "snmp-only", "name": "snmp-only", "enabled": "true", "description": "old",
+		"groups.#": "1", "groups.0": "2", "use_ip": "true", "ip": "", "dns": "", "port": "10050",
+	}}
+	base := map[string]interface{}{"host": "snmp-only", "groups": []interface{}{"2"}}
+
+	desc := map[string]interface{}{"description": "new"}
+	for k, v := range base {
+		desc[k] = v
+	}
+	if _, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(desc), nil); err != nil {
+		t.Errorf("changing description of a host without agent interface must plan: %v", err)
+	}
+
+	port := map[string]interface{}{"port": "10051"}
+	for k, v := range base {
+		port[k] = v
+	}
+	if _, err := r.Diff(context.Background(), state, terraform.NewResourceConfigRaw(port), nil); err == nil || !strings.Contains(err.Error(), "ip is required") {
+		t.Errorf("changing interface attributes without ip must still fail, got %v", err)
+	}
+}
+
 func TestHostCustomizeDiff(t *testing.T) {
 	r := resourceHost()
 	groups := []interface{}{"2"}
@@ -218,6 +244,9 @@ func TestMediaTypeCustomizeDiff(t *testing.T) {
 		{"script missing exec_path", map[string]interface{}{"name": "m", "type": 1}, "exec_path is required"},
 		{"webhook missing script", map[string]interface{}{"name": "m", "type": 4}, "script is required"},
 		{"webhook bad timeout", map[string]interface{}{"name": "m", "type": 4, "script": "x", "timeout": "5m"}, "timeout must be between"},
+		{"webhook timeout macro", map[string]interface{}{"name": "m", "type": 4, "script": "x", "timeout": "{$TIMEOUT}"}, "timeout must be between"},
+		{"webhook with unknown foreign field", map[string]interface{}{"name": "m", "type": 4, "script": "x", "smtp_server": unknown}, "smtp_server is not supported for media type 4"},
+		{"email unknown server but invalid helo", map[string]interface{}{"name": "m", "type": 0, "smtp_server": unknown, "smtp_helo": "", "smtp_email": "e"}, "smtp_helo is required"},
 		{"parameter on email", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e",
 			"parameter": []interface{}{map[string]interface{}{"name": "a", "value": "b"}}}, "parameter is not supported for media type 0"},
 		{"unsupported type", map[string]interface{}{"name": "m", "type": 3}, "expected type to be one of"},

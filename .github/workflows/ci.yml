@@ -90,6 +90,9 @@ jobs:
           docker compose -f docker-compose.acc.yml logs --tail 50 zabbix-server; exit 1
       - name: Acceptance tests
         run: go test -count=1 -timeout 30m -run 'TestAcc' -v ./zabbix
+      - name: Zabbix logs
+        if: failure()
+        run: docker compose -f docker-compose.acc.yml logs --tail 200
       - name: Stop Zabbix
         if: always()
         run: docker compose -f docker-compose.acc.yml down -v

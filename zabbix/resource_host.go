@@ -92,6 +92,11 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 	if !planKnown(d, "use_ip", "ip", "dns") {
 		return nil
 	}
+	// Interface attributes are only validated when they are being set: an
+	// imported host without an agent interface must remain updatable.
+	if d.Id() != "" && !d.HasChanges("use_ip", "ip", "dns", "port") {
+		return nil
+	}
 	if d.Get("use_ip").(bool) {
 		if d.Get("ip").(string) == "" {
 			return fmt.Errorf("ip is required when use_ip is true")

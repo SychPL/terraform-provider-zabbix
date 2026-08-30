@@ -196,6 +196,59 @@ func TestActionRead_RefusesUnsupportedEventSourceAndEvaltype(t *testing.T) {
 	}
 }
 
+func TestActionRead_RefusesOperationConditions(t *testing.T) {
+	fixture := strings.Replace(strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture),
+		`"opconditions":[]`, `"opconditions":[{"conditiontype":"14","operator":"0","value":"0"}]`, 1)
+	c := fixtureServer(t, "action.get", fixture)
+	d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{})
+	d.SetId("10")
+	diags := resourceAction().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "opconditions") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+		t.Fatalf("operation conditions must be refused with a state rm hint, got %v", diags)
+	}
+}
+
+func TestMediaTypeRead_RefusesScriptWithParameters(t *testing.T) {
+	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"1","name":"s","status":"0",
+		"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+		"smtp_authentication":"0","username":"","passwd":"","exec_path":"x.sh","gsm_modem":"","script":"","timeout":"30s",
+		"parameters":[{"sortorder":"0","value":"{ALERT.SENDTO}"}]}]`)
+	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+	d.SetId("9")
+	diags := resourceMediaType().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "script media type with parameters") || d.Id() != "9" {
+		t.Fatalf("script parameters must be refused and the ID kept, got %v id=%q", diags, d.Id())
+	}
+}
+
+func TestHostUpdate_NoAgentInterface(t *testing.T) {
+	// Imported SNMP-only host: interface attributes cannot be updated, and no
+	// hostinterface.update must be attempted on the SNMP interface.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.update":
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "host.get":
+			return json.RawMessage(`[{"hostid":"1","host":"snmp-only","name":"snmp-only","status":"0","description":"",
+				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+				"interfaces":[{"interfaceid":"5","type":"2","main":"1","useip":"1","ip":"10.0.0.2","dns":"","port":"161"}]}]`), nil
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceHost()
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "snmp-only", "groups": []interface{}{"2"}, "ip": "192.0.2.1"})
+	d.SetId("1")
+	diags := r.UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "no main agent interface") {
+		t.Fatalf("updating the interface of a host without an agent interface must fail clearly, got %v", diags)
+	}
+	if len(s.calls("hostinterface.update")) != 0 {
+		t.Fatal("the SNMP interface must never be touched")
+	}
+}
+
 func TestActionRead_RefusesUnsupportedOperationType(t *testing.T) {
 	// operationtype "1" (remote command) is not supported by the provider.
 	c := fixtureServer(t, "action.get", strings.NewReplacer("%OP%", "1", "%DM%", "1").Replace(actionFixture))

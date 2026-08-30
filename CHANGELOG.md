@@ -36,7 +36,8 @@
   `tls_insecure`, `ca_cert_file`. HTTP redirects are never followed and
   malformed JSON-RPC responses are never treated as success; URLs with embedded
   credentials are rejected.
-- Automatic single re-login when a username/password session expires.
+- Automatic single re-login when a username/password session expires; all
+  concurrent callers share the result (including a failure).
 - `terraform import` for all resources.
 - `timeouts` blocks and context propagation to HTTP requests.
 - Idempotent deletes.
@@ -44,12 +45,15 @@
 - `zabbix_media_type`: SMTP port/security/verification/authentication,
   `username`, `password`; sensitive webhook parameter values; plan-time
   validation per media type (attributes of other types are rejected, a type
-  change clears the previous type's attributes in Zabbix).
+  change clears the previous type's attributes in Zabbix). Script media types
+  with command-line parameters are refused (not modelled) instead of having
+  their parameters wiped.
 - `zabbix_action`: `users` recipients, `condition.value2` (event tag value
   conditions), `pause_suppressed`, `notify_if_canceled`, validation of
   escalation steps, periods and recipients. Actions containing operation types,
-  event sources or custom expressions the provider does not support are refused
-  instead of silently rewritten. Plan-time validation defers values that are
+  event sources, custom expressions or operation conditions the provider does
+  not support are refused instead of silently rewritten (the error explains
+  how to detach the resource with `terraform state rm`). Plan-time validation defers values that are
   not known until apply.
 - Unit tests (mock JSON-RPC server) and acceptance tests against Zabbix 6.4.
 - CI workflow (fmt, vet, race tests, generated docs check, acceptance tests

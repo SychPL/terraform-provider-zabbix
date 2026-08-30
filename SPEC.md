@@ -57,6 +57,7 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C13 | P1 | Odpowiedz 200 bez `result` i bez `error` (albo bez `jsonrpc: 2.0`) = blad, nigdy sukces mutacji | `TestCall_MalformedSuccessResponse` | DONE |
 | C14 | P2 | URL z userinfo odrzucany (nie wycieka do diagnostyki); `api_token` weryfikowany w configure przez `user.get` | `TestProviderConfigure_AuthValidation` | DONE |
 | C15 | P3 | Leniwe pierwsze logowanie tez single-flight | `TestCall_LazyFirstLoginIsSingleFlight` | DONE |
+| C16 | P2 | Single-flight loginu dzieli wynik (takze blad) ze wszystkimi oczekujacymi - nieudany re-login nie powoduje N kolejnych prob | `TestCall_FailedReloginIsSharedByWaiters` | DONE |
 
 Odrzucone z draftu: C6 (lazy login - `terraform validate` nie konfiguruje providera,
 wymaganie bylo sprzeczne z `GetVersion` w configure), `user.logout` (SDKv2 nie ma hooka
@@ -83,6 +84,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | H2 | P2 | `use_ip` (default true), `ip` Optional, `dns`; `CustomizeDiff`: `use_ip` wymaga `ip`, inaczej `dns`; create wysyla oba pola | `TestHostCustomizeDiff`, krok DNS w `TestAccHost_lifecycle` | DONE |
 | H3 | P2 | `name` (Computed, default = `host`), `enabled`, `description`; `groups` `MinItems: 1`; `port` walidowany (1-65535 lub makro) | `TestHostCustomizeDiff`, `TestAccHost_lifecycle` | DONE |
 | H4 | P3 | Odlaczenie template przez `templates_clear` (roznica stare - nowe), drugi template zostaje | krok 2 `TestAccHost_lifecycle` (2 -> 1 template) | DONE |
+| H5 | P2 | Zaimportowany host bez interfejsu agenta (np. SNMP-only) jest edytowalny (grupy, opis); walidacja `ip`/`dns` tylko przy tworzeniu lub zmianie pol interfejsu; proba zmiany interfejsu = czytelny blad, interfejs SNMP nietkniety | `TestHostCustomizeDiff_ImportedHostWithoutAgentInterface`, `TestHostUpdate_NoAgentInterface` | DONE |
 
 ### 3.4 `zabbix_media_type`
 
@@ -95,7 +97,9 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | M5 | P3 | Walidacja w planie: `type` w {0,1,2,4}; pola wymagane per typ; `parameter` tylko dla 4; `password` tylko z `smtp_authentication=1`; `timeout` 1-60s | `TestMediaTypeCustomizeDiff` | DONE |
 | M6 | P3 | Read ustawia tylko pola wlasciwe dla typu, reszta = defaulty (brak perpetual diff po zmianie typu) | `TestMediaTypeRead_TypeAwareReset` | DONE |
 | M7 | P2 | Update wysyla pola nieaktywnych typow wyczyszczone (zmiana typu nie zostawia np. `passwd` w Zabbixie - potwierdzone na API) | `TestMediaTypeParams_TypeAware`, `TestAccMediaType_scriptSmsTypeChange` | DONE |
-| M8 | P2 | Jawnie ustawione pola innego typu odrzucane w planie (inaczej bylyby cicho ignorowane) | `TestMediaTypeCustomizeDiff` | DONE |
+| M8 | P2 | Jawnie ustawione pola innego typu odrzucane w planie (inaczej bylyby cicho ignorowane); walidacja per pole, wartosci unknown traktowane jako ustawione | `TestMediaTypeCustomizeDiff` | DONE |
+| M9 | P1 | Script media type: `parameters` (sortorder/value) nigdy nie wysylane; Read odmawia zarzadzania skryptem z parametrami (inaczej rename kasowalby argumenty) | `TestMediaTypeParams_ScriptParametersUntouched`, `TestMediaTypeRead_RefusesScriptWithParameters` | DONE |
+| M10 | P3 | `timeout` webhooka: tylko 1-60s, makra odrzucane (API ich nie przyjmuje) | `TestMediaTypeCustomizeDiff` | DONE |
 
 ### 3.5 `zabbix_action`
 
@@ -111,6 +115,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | A8 | P2 | `condition.value2` (nazwa tagu dla typu 26) wysylane tylko dla typu 26 (API odrzuca dla innych) i walidowane | `TestActionRead_Mapping`, `TestActionCustomizeDiff`, warunek typu 26 w `TestAccAction_lifecycle` | DONE |
 | A9 | P2 | Read odmawia zarzadzania akcja z `eventsource != 0` lub `evaltype = 3` (custom formula bylaby cicho skasowana) | `TestActionRead_RefusesUnsupportedEventSourceAndEvaltype` | DONE |
 | A10 | P2 | `CustomizeDiff` (host, media type, action) pomija walidacje wartosci nieznanych w planie (referencje do innych zasobow) | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
+| A11 | P1 | Read odmawia zarzadzania operacja z `opconditions` (update nadpisuje operacje w calosci) ; komunikaty odmowy wskazuja `terraform state rm` | `TestActionRead_RefusesOperationConditions` | DONE |
 
 ### 3.6 Provider
 
@@ -131,7 +136,8 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 | T3 | P1 | CI na push/PR: gofmt, vet, `go mod tidy` check, `go test -race`, docs drift, job acceptance na docker-compose (`--wait` + healthcheck); actions pinowane po SHA, terraform pinowany; release wywoluje CI (`workflow_call`) jako bramke, GoReleaser pinowany | `.github/workflows/ci.yml`, `release.yml`; run 33322303435 na forku SychPL zielony (unit + acceptance) | DONE |
 | T5 | P2 | Testy jednostkowe mapowania API -> stan (Read) na fixture'ach z realnych odpowiedzi 6.4 | `resource_read_test.go` | DONE |
 | T6 | P2 | CI: `govulncheck` (zaleznosci i Go podniesione - 0 znanych podatnosci), `terraform fmt -check examples/`, `goreleaser check` + `build --snapshot --single-target`; release wymaga tagu osiagalnego z `main` i environment `release` | `ci.yml`, `release.yml` | DONE |
-| T7 | P3 | `.goreleaser.yml`: usunieta niewspierana para darwin/arm | `goreleaser check` w CI | DONE |
+| T7 | P3 | `.goreleaser.yml`: usunieta niewspierana para darwin/arm, `archives.formats`, manifest Registry (`terraform-registry-manifest.json`) w release i w checksumie | `goreleaser check` w CI | DONE |
+| T8 | P3 | CI acceptance: czeka na start zabbix-server (locki DB przy pierwszym starcie blokowaly `host.create`), lekkie template'y w tescie hosta, zrzut logow przy failu | `ci.yml` | DONE |
 | T4 | P3 | `docker-compose.acc.yml` (upstream ignoruje `docker-compose.yml` jako plik lokalny): bez `version:`, obrazy `alpine-6.4.21`, healthchecki, porty na 127.0.0.1 | `docker compose -f docker-compose.acc.yml config` | DONE |
 
 ### 3.8 Dokumentacja

@@ -181,17 +181,16 @@ var mediaTypeFields = map[int][]string{
 }
 
 func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
-	keys := []string{"type"}
-	for _, fields := range mediaTypeFields {
-		keys = append(keys, fields...)
-	}
-	if !planKnown(d, keys...) {
+	if !planKnown(d, "type") {
 		return nil
 	}
 	t := d.Get("type").(int)
+	known := func(f string) bool { return planKnown(d, f) }
 
 	// Attributes of other types set to a non-default value would be silently
 	// dropped (they are cleared in Zabbix and reset by Read); reject them.
+	// Unknown values are always "set" - a reference to another resource is an
+	// explicit configuration.
 	allowed := map[string]bool{}
 	for _, f := range mediaTypeFields[t] {
 		allowed[f] = true
@@ -201,11 +200,13 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 			if allowed[f] {
 				continue
 			}
-			set := false
-			if f == "parameter" {
-				set = len(d.Get(f).([]interface{})) > 0
-			} else {
-				set = !reflect.DeepEqual(d.Get(f), mediaTypeSchema[f].Default)
+			set := !known(f)
+			if known(f) {
+				if f == "parameter" {
+					set = len(d.Get(f).([]interface{})) > 0
+				} else {
+					set = !reflect.DeepEqual(d.Get(f), mediaTypeSchema[f].Default)
+				}
 			}
 			if set {
 				return fmt.Errorf("%s is not supported for media type %d and would be ignored", f, t)
@@ -214,7 +215,7 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 	}
 
 	require := func(field string) error {
-		if d.Get(field).(string) == "" {
+		if known(field) && d.Get(field).(string) == "" {
 			return fmt.Errorf("%s is required for media type %d", field, t)
 		}
 		return nil
@@ -226,8 +227,12 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 				return err
 			}
 		}
-		if d.Get("smtp_authentication").(int) == 0 && (d.Get("username").(string) != "" || d.Get("password").(string) != "") {
-			return fmt.Errorf("username/password require smtp_authentication = 1")
+		if known("smtp_authentication") && d.Get("smtp_authentication").(int) == 0 {
+			for _, f := range []string{"username", "password"} {
+				if known(f) && d.Get(f).(string) != "" {
+					return fmt.Errorf("username/password require smtp_authentication = 1")
+				}
+			}
 		}
 	case mediaTypeScript:
 		return require("exec_path")
@@ -237,12 +242,14 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 		if err := require("script"); err != nil {
 			return err
 		}
-		secs, err := parseZabbixDuration(d.Get("timeout").(string))
-		if err != nil {
-			return fmt.Errorf("timeout: %w", err)
-		}
-		if secs != -1 && (secs < 1 || secs > 60) {
-			return fmt.Errorf("timeout must be between 1s and 60s")
+		if known("timeout") {
+			secs, err := parseZabbixDuration(d.Get("timeout").(string))
+			if err != nil {
+				return fmt.Errorf("timeout: %w", err)
+			}
+			if secs < 1 || secs > 60 { // the API accepts 1-60s only, no macros
+				return fmt.Errorf("timeout must be between 1s and 60s")
+			}
 		}
 	}
 	return nil
@@ -306,6 +313,9 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 		ints[field] = n
 	}
 
+	if ints["type"] == mediaTypeScript && len(mt.Parameters) > 0 {
+		return diag.Errorf("media type %s is a script media type with parameters, which this provider does not support; %s", d.Id(), unmanageableHint)
+	}
 	params := make([]map[string]interface{}, len(mt.Parameters))
 	for i, p := range mt.Parameters {
 		params[i] = map[string]interface{}{"name": p.Name, "value": p.Value}

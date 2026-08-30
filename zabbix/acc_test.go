@@ -110,8 +110,10 @@ func testAccCheckGone(t *testing.T, addr string, get func(*ZabbixClient, string)
 func TestAccHost_lifecycle(t *testing.T) {
 	testAccPreCheck(t)
 	name := acctest.RandomWithPrefix("tfacc-host")
-	templateA := lookupID(t, "template.get", "templateid", map[string]interface{}{"host": "Linux by Zabbix agent"})
-	templateB := lookupID(t, "template.get", "templateid", map[string]interface{}{"host": "Zabbix server health"})
+	// Small stock templates: linking large ones (hundreds of items) can take
+	// minutes on a cold CI Zabbix and blocks the API for other tests.
+	templateA := lookupID(t, "template.get", "templateid", map[string]interface{}{"host": "OS processes by Zabbix agent"})
+	templateB := lookupID(t, "template.get", "templateid", map[string]interface{}{"host": "Systemd by Zabbix agent 2"})
 
 	base := testAccProviderConfig() + fmt.Sprintf(`
 resource "zabbix_host_group" "g" { name = "%s-grp" }

@@ -54,11 +54,17 @@ type ZabbixClient struct {
 	apiToken   string
 	httpClient *http.Client
 
-	mu    sync.Mutex // guards token
+	mu    sync.Mutex // guards token and flight
 	token string
-	// loginSem serialises re-login attempts (single-flight). A channel instead
-	// of a mutex so that waiters can give up when their context is cancelled.
-	loginSem chan struct{}
+	// flight is the in-progress login, if any. Callers that observe the same
+	// stale token wait for it (or for their own context) and share its result,
+	// including a failure, instead of each logging in again.
+	flight *loginFlight
+}
+
+type loginFlight struct {
+	done chan struct{}
+	err  error
 }
 
 type jsonRpcRequest struct {
@@ -154,6 +160,9 @@ type HostSpec struct {
 }
 
 type MediaType struct {
+	// Parameters are only modelled for webhooks (name/value). For script media
+	// types the API uses sortorder/value; Read refuses to manage those and
+	// Update never sends them.
 	MediaTypeID        string           `json:"mediatypeid,omitempty"`
 	Name               string           `json:"name"`
 	Type               string           `json:"type"`   // "0" = Email, "1" = Script, "2" = SMS, "4" = Webhook
@@ -210,6 +219,10 @@ type ActionOperation struct {
 	EscStepFrom   string           `json:"esc_step_from"`
 	EscStepTo     string           `json:"esc_step_to"`
 	OpMessage     *ActionOpMessage `json:"opmessage,omitempty"`
+	// OpConditions are not modelled by the provider; they are read so that
+	// Read can refuse to manage operations that have them (action.update
+	// replaces operations wholesale and would drop them silently).
+	OpConditions []json.RawMessage `json:"opconditions,omitempty"`
 	// Always sent (possibly empty): Zabbix keeps existing recipients when the
 	// field is omitted from action.update.
 	OpMessageGrp []ActionOpMessageGrp `json:"opmessage_grp"`
@@ -273,7 +286,6 @@ func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
 			// Authorization header, possibly to a downgraded http:// location.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		loginSem: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -317,26 +329,43 @@ func (c *ZabbixClient) Call(ctx context.Context, method string, params interface
 
 // login obtains a new session token. staleToken is the token that was observed
 // to be invalid; if another goroutine already replaced it, login is skipped.
-// Only one login runs at a time; other callers wait for it or for their ctx.
+// Only one login runs at a time; other callers wait for its result or for
+// their own context.
 func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
-	select {
-	case c.loginSem <- struct{}{}:
-		defer func() { <-c.loginSem }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	if c.currentToken() != staleToken {
+	c.mu.Lock()
+	if c.token != staleToken {
+		c.mu.Unlock()
 		return nil
 	}
+	if f := c.flight; f != nil {
+		c.mu.Unlock()
+		select {
+		case <-f.done:
+			return f.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	f := &loginFlight{done: make(chan struct{})}
+	c.flight = f
+	c.mu.Unlock()
+
 	var token string
 	params := map[string]string{"username": c.username, "password": c.password}
-	if err := c.rawCall(ctx, "user.login", params, "", &token); err != nil {
-		return fmt.Errorf("user.login failed: %w", err)
+	err := c.rawCall(ctx, "user.login", params, "", &token)
+	if err != nil {
+		err = fmt.Errorf("user.login failed: %w", err)
 	}
+
 	c.mu.Lock()
-	c.token = token
+	if err == nil {
+		c.token = token
+	}
+	c.flight = nil
 	c.mu.Unlock()
-	return nil
+	f.err = err
+	close(f.done)
+	return err
 }
 
 // Login authenticates eagerly. It is a no-op when an API token is configured.
@@ -587,6 +616,7 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 		}
 	case "1": // Script
 		params["exec_path"] = mt.ExecPath
+		delete(params, "parameters") // sortorder/value parameters are left untouched
 	case "2": // SMS
 		params["gsm_modem"] = mt.GSMModem
 	case "4": // Webhook
