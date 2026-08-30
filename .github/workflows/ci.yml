@@ -27,14 +27,19 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: go vet
         run: go vet ./...
+      - name: No payload or secret logging in provider code
+        run: |
+          if grep -rnE 'os\.Stderr|os\.Stdout|fmt\.Fprint|fmt\.Print|\blog\.' --include='*.go' --exclude='*_test.go' zabbix/ main.go; then
+            echo "::error::provider code must not write to stdout/stderr or the standard logger (use tflog without payloads)"; exit 1
+          fi
       - name: go mod tidy check
         run: go mod tidy && git diff --exit-code go.mod go.sum
       - name: Unit tests (race)
         run: go test -race -count=1 ./...
       - name: Known vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - name: Example configurations are formatted
-        run: terraform fmt -check -recursive examples/
+        run: terraform fmt -check -recursive examples/ example_deployment/
       - name: Docs are up to date
         run: |
           go generate ./...

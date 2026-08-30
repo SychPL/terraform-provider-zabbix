@@ -313,6 +313,9 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 		ints[field] = n
 	}
 
+	if _, ok := mediaTypeFields[ints["type"]]; !ok {
+		return diag.Errorf("media type %s has type %d which this provider does not support; %s", d.Id(), ints["type"], unmanageableHint)
+	}
 	if ints["type"] == mediaTypeScript && len(mt.Parameters) > 0 {
 		return diag.Errorf("media type %s is a script media type with parameters, which this provider does not support; %s", d.Id(), unmanageableHint)
 	}

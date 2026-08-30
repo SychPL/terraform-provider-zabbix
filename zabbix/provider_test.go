@@ -183,6 +183,15 @@ func TestCustomizeDiff_UnknownValuesAreDeferred(t *testing.T) {
 		"operation": []interface{}{map[string]interface{}{"mediatypeid": unknown, "user_groups": unknown}}}); err != nil {
 		t.Errorf("action with unknown references must plan: %v", err)
 	}
+	// Unknown values inside set elements arrive as the SDK marker string, not
+	// as typed values: this must not panic and must not produce false errors.
+	if err := planDiff(t, resourceAction(), map[string]interface{}{"name": "a",
+		"condition": []interface{}{
+			map[string]interface{}{"conditiontype": unknown, "value": "1"},
+			map[string]interface{}{"conditiontype": 26, "value": "prod", "value2": unknown},
+		}}); err != nil {
+		t.Errorf("action with unknown values inside condition elements must plan: %v", err)
+	}
 }
 
 func TestHostCustomizeDiff_ImportedHostWithoutAgentInterface(t *testing.T) {

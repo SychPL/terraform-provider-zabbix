@@ -3,7 +3,7 @@
 # (docker-compose.yml is reserved for personal local environments and git-ignored.)
 services:
   zabbix-db:
-    image: postgres:15-alpine
+    image: postgres:15-alpine@sha256:fe0737ba566a2c5b2a28f34433c0a423261900ec17b9bf7ad115e1aae7e57f1b
     container_name: zabbix-db
     environment:
       POSTGRES_DB: zabbix
@@ -18,7 +18,7 @@ services:
       retries: 20
 
   zabbix-server:
-    image: zabbix/zabbix-server-pgsql:alpine-6.4.21
+    image: zabbix/zabbix-server-pgsql:alpine-6.4.21@sha256:758c058909fdcc4e73034380460ea44bd5be965a80dcfc28744408b792ef04e5
     container_name: zabbix-server
     ports:
       - "127.0.0.1:10051:10051"
@@ -32,7 +32,7 @@ services:
         condition: service_healthy
 
   zabbix-web:
-    image: zabbix/zabbix-web-nginx-pgsql:alpine-6.4.21
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-6.4.21@sha256:87f21dd6ba638f6297dc1f6d0d3169d416a6fccc09981d5282ff5f886a26671c
     container_name: zabbix-web
     ports:
       - "127.0.0.1:8082:8080"

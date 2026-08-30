@@ -208,6 +208,30 @@ func TestActionRead_RefusesOperationConditions(t *testing.T) {
 	}
 }
 
+func TestMediaTypeRead_RefusesUnsupportedType(t *testing.T) {
+	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"3","name":"jabber","status":"0",
+		"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"","timeout":"30s","parameters":[]}]`)
+	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+	d.SetId("9")
+	diags := resourceMediaType().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "does not support") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+		t.Fatalf("unsupported media type type must be refused with a hint, got %v", diags)
+	}
+}
+
+func TestMediaTypeRead_NonNumericFieldIsAnError(t *testing.T) {
+	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"4","name":"wh","status":"0",
+		"smtp_server":"","smtp_port":"twenty-five","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"30s","parameters":[]}]`)
+	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+	d.SetId("9")
+	diags := resourceMediaType().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "smtp_port") || d.Id() != "9" {
+		t.Fatalf("unexpected API value must be surfaced and keep the ID, got %v id=%q", diags, d.Id())
+	}
+}
+
 func TestMediaTypeRead_RefusesScriptWithParameters(t *testing.T) {
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"1","name":"s","status":"0",
 		"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",

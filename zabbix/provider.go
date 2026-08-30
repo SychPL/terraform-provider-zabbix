@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -14,6 +15,10 @@ import (
 
 // SupportedVersionPrefix is the Zabbix API version line the provider is tested against.
 const SupportedVersionPrefix = "6.4"
+
+// configureTimeout bounds the version check and authentication performed
+// while configuring the provider.
+const configureTimeout = 2 * time.Minute
 
 func Provider() *schema.Provider {
 	return &schema.Provider{
@@ -104,6 +109,11 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	if err != nil {
 		return nil, diag.FromErr(err)
 	}
+
+	// Resource operations get their deadline from the resource timeouts; the
+	// configuration probes need their own.
+	ctx, cancel := context.WithTimeout(ctx, configureTimeout)
+	defer cancel()
 
 	version, err := client.GetVersion(ctx)
 	if err != nil {

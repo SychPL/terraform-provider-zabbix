@@ -110,8 +110,10 @@ func TestGetHostGroup_NotFoundVsError(t *testing.T) {
 }
 
 func TestCall_HTTPErrorIsNotNotFound(t *testing.T) {
+	const echoedSecret = "Authorization: Bearer LEAKED-TOKEN-7f3a"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "gateway down", http.StatusBadGateway)
+		// A misbehaving proxy echoing the request back.
+		http.Error(w, "gateway down\n"+echoedSecret, http.StatusBadGateway)
 	}))
 	t.Cleanup(srv.Close)
 	c, _ := NewZabbixClient(ClientConfig{URL: srv.URL, APIToken: "tok"})
@@ -119,6 +121,29 @@ func TestCall_HTTPErrorIsNotNotFound(t *testing.T) {
 	_, err := c.GetHost(context.Background(), "1")
 	if err == nil || errors.Is(err, ErrNotFound) {
 		t.Fatalf("want transport error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "LEAKED-TOKEN") {
+		t.Fatalf("response body must not be included in diagnostics: %v", err)
+	}
+}
+
+func TestCall_MutationIsNeverRetriedOnTransportError(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		// Execute the create and drop the connection without a response.
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	t.Cleanup(srv.Close)
+	c, _ := NewZabbixClient(ClientConfig{URL: srv.URL, APIToken: "tok"})
+
+	if _, err := c.CreateHostGroup(context.Background(), "g"); err == nil {
+		t.Fatal("dropped connection must be an error")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("a mutation must be sent exactly once, got %d requests", got)
 	}
 }
 
@@ -332,6 +357,13 @@ func TestCall_ContextCancelled(t *testing.T) {
 	_, err := c.GetHostGroup(ctx, "1")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want context deadline error, got %v", err)
+	}
+}
+
+func TestNewZabbixClient_NoImplicitTimeout(t *testing.T) {
+	c, _ := NewZabbixClient(ClientConfig{URL: "https://x", APIToken: "t"})
+	if c.httpClient.Timeout != 0 {
+		t.Fatalf("the http client must not cap requests; resource timeouts do (got %s)", c.httpClient.Timeout)
 	}
 }
 

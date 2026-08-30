@@ -44,7 +44,9 @@ type ClientConfig struct {
 	APIToken   string
 	Insecure   bool
 	CACertFile string
-	Timeout    time.Duration
+	// Timeout bounds the wait for response headers of a single request. Zero
+	// means no limit; the request context deadline applies in any case.
+	Timeout time.Duration
 }
 
 type ZabbixClient struct {
@@ -262,16 +264,12 @@ func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
 		}
 		tlsCfg.RootCAs = pool
 	}
-	// Per-request cap. Terraform's resource timeouts (default 2 minutes,
-	// configurable per resource) are enforced through the request context; this
-	// is only a safety net for calls made without a deadline. Linking large
-	// templates can legitimately take minutes on a busy Zabbix server.
-	timeout := cfg.Timeout
-	if timeout == 0 {
-		timeout = 5 * time.Minute
-	}
+	// No http.Client timeout: every call carries a context deadline (resource
+	// timeouts for CRUD, an explicit timeout for provider configuration), so a
+	// user-configured `timeouts { create = "15m" }` is honoured as-is.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsCfg
+	transport.ResponseHeaderTimeout = cfg.Timeout // 0 = no limit
 
 	return &ZabbixClient{
 		url:      cfg.URL,
@@ -280,7 +278,6 @@ func NewZabbixClient(cfg ClientConfig) (*ZabbixClient, error) {
 		apiToken: cfg.APIToken,
 		token:    cfg.APIToken,
 		httpClient: &http.Client{
-			Timeout:   timeout,
 			Transport: transport,
 			// Never follow redirects: a 307/308 would replay the POST body and the
 			// Authorization header, possibly to a downgraded http:// location.
@@ -357,14 +354,16 @@ func (c *ZabbixClient) login(ctx context.Context, staleToken string) error {
 		err = fmt.Errorf("user.login failed: %w", err)
 	}
 
+	// Publish the result and clear the flight atomically: a caller arriving in
+	// between must either wait on this flight or see the new token.
 	c.mu.Lock()
 	if err == nil {
 		c.token = token
 	}
-	c.flight = nil
-	c.mu.Unlock()
 	f.err = err
 	close(f.done)
+	c.flight = nil
+	c.mu.Unlock()
 	return err
 }
 

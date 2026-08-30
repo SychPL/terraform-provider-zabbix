@@ -29,7 +29,7 @@ Poza zakresem (v0.3+), decyzje z recenzji:
 - wiele interfejsow hosta, interfejsy SNMP/IPMI/JMX, makra, tagi, proxy, inventory
 - parametry media type typu Script (`sortorder`/`value`)
 - migracja SDKv2 -> terraform-plugin-framework (osobny etap po hardeningu)
-- publikacja w Registry (namespace `adi` i module path do ustalenia z wlascicielem repo)
+- publikacja w Registry (sam cut-release); namespace ujednolicony na `Tensai123` (repo wydajace artefakty)
 
 Wersja docelowa API: Zabbix 6.4. Naglowek `Authorization: Bearer` (wspierany od 6.4)
 zamiast pola `auth` w body - kompatybilny z 7.x.
@@ -57,7 +57,9 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C13 | P1 | Odpowiedz 200 bez `result` i bez `error` (albo bez `jsonrpc: 2.0`) = blad, nigdy sukces mutacji | `TestCall_MalformedSuccessResponse` | DONE |
 | C14 | P2 | URL z userinfo odrzucany (nie wycieka do diagnostyki); `api_token` weryfikowany w configure przez `user.get` | `TestProviderConfigure_AuthValidation` | DONE |
 | C15 | P3 | Leniwe pierwsze logowanie tez single-flight | `TestCall_LazyFirstLoginIsSingleFlight` | DONE |
-| C16 | P2 | Single-flight loginu dzieli wynik (takze blad) ze wszystkimi oczekujacymi - nieudany re-login nie powoduje N kolejnych prob | `TestCall_FailedReloginIsSharedByWaiters` | DONE |
+| C16 | P2 | Single-flight loginu dzieli wynik (takze blad) ze wszystkimi oczekujacymi - nieudany re-login nie powoduje N kolejnych prob; wynik publikowany i `flight` czyszczony atomowo pod mutexem | `TestCall_FailedReloginIsSharedByWaiters` | DONE |
+| C17 | P2 | Brak timeoutu na `http.Client` - deadline zawsze z ctx (timeouts zasobu; `configureTimeout` 2 min dla probe'ow providera), wiec `timeouts { create = "15m" }` dziala | `TestNewZabbixClient_NoImplicitTimeout`, `TestCall_ContextCancelled` | DONE |
+| C18 | P2 | Mutacja nigdy nie jest ponawiana po bledzie transportu (zerwane polaczenie = dokladnie 1 request); body odpowiedzi HTTP nie trafia do diagnostyki (test z echem tokenu) | `TestCall_MutationIsNeverRetriedOnTransportError`, `TestCall_HTTPErrorIsNotNotFound` | DONE |
 
 Odrzucone z draftu: C6 (lazy login - `terraform validate` nie konfiguruje providera,
 wymaganie bylo sprzeczne z `GetVersion` w configure), `user.logout` (SDKv2 nie ma hooka
@@ -84,6 +86,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | H2 | P2 | `use_ip` (default true), `ip` Optional, `dns`; `CustomizeDiff`: `use_ip` wymaga `ip`, inaczej `dns`; create wysyla oba pola | `TestHostCustomizeDiff`, krok DNS w `TestAccHost_lifecycle` | DONE |
 | H3 | P2 | `name` (Computed, default = `host`), `enabled`, `description`; `groups` `MinItems: 1`; `port` walidowany (1-65535 lub makro) | `TestHostCustomizeDiff`, `TestAccHost_lifecycle` | DONE |
 | H4 | P3 | Odlaczenie template przez `templates_clear` (roznica stare - nowe), drugi template zostaje | krok 2 `TestAccHost_lifecycle` (2 -> 1 template) | DONE |
+| H6 | P2 | `name` niekonfigurowane = zawsze rowne `host` (takze po zmianie `host`; wartosc Computed ze stanu nie jest wysylana) | krok DNS `TestAccHost_lifecycle` | DONE |
 | H5 | P2 | Zaimportowany host bez interfejsu agenta (np. SNMP-only) jest edytowalny (grupy, opis); walidacja `ip`/`dns` tylko przy tworzeniu lub zmianie pol interfejsu; proba zmiany interfejsu = czytelny blad, interfejs SNMP nietkniety | `TestHostCustomizeDiff_ImportedHostWithoutAgentInterface`, `TestHostUpdate_NoAgentInterface` | DONE |
 
 ### 3.4 `zabbix_media_type`
@@ -100,6 +103,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | M8 | P2 | Jawnie ustawione pola innego typu odrzucane w planie (inaczej bylyby cicho ignorowane); walidacja per pole, wartosci unknown traktowane jako ustawione | `TestMediaTypeCustomizeDiff` | DONE |
 | M9 | P1 | Script media type: `parameters` (sortorder/value) nigdy nie wysylane; Read odmawia zarzadzania skryptem z parametrami (inaczej rename kasowalby argumenty) | `TestMediaTypeParams_ScriptParametersUntouched`, `TestMediaTypeRead_RefusesScriptWithParameters` | DONE |
 | M10 | P3 | `timeout` webhooka: tylko 1-60s, makra odrzucane (API ich nie przyjmuje) | `TestMediaTypeCustomizeDiff` | DONE |
+| M11 | P3 | Read odmawia zarzadzania media type o nieobslugiwanym `type` (np. 3); nienumeryczne pola API = diag z zachowaniem ID | `TestMediaTypeRead_RefusesUnsupportedType`, `TestMediaTypeRead_NonNumericFieldIsAnError` | DONE |
 
 ### 3.5 `zabbix_action`
 
@@ -116,6 +120,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | A9 | P2 | Read odmawia zarzadzania akcja z `eventsource != 0` lub `evaltype = 3` (custom formula bylaby cicho skasowana) | `TestActionRead_RefusesUnsupportedEventSourceAndEvaltype` | DONE |
 | A10 | P2 | `CustomizeDiff` (host, media type, action) pomija walidacje wartosci nieznanych w planie (referencje do innych zasobow) | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
 | A11 | P1 | Read odmawia zarzadzania operacja z `opconditions` (update nadpisuje operacje w calosci) ; komunikaty odmowy wskazuja `terraform state rm` | `TestActionRead_RefusesOperationConditions` | DONE |
+| A12 | P2 | Elementy setu `condition` z wartosciami unknown (marker SDK zamiast typu) nie powoduja paniki ani falszywych bledow w planie | `TestCustomizeDiff_UnknownValuesAreDeferred` | DONE |
 
 ### 3.6 Provider
 
@@ -137,7 +142,8 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 | T5 | P2 | Testy jednostkowe mapowania API -> stan (Read) na fixture'ach z realnych odpowiedzi 6.4 | `resource_read_test.go` | DONE |
 | T6 | P2 | CI: `govulncheck` (zaleznosci i Go podniesione - 0 znanych podatnosci), `terraform fmt -check examples/`, `goreleaser check` + `build --snapshot --single-target`; release wymaga tagu osiagalnego z `main` i environment `release` | `ci.yml`, `release.yml` | DONE |
 | T7 | P3 | `.goreleaser.yml`: usunieta niewspierana para darwin/arm, `archives.formats`, manifest Registry (`terraform-registry-manifest.json`) w release i w checksumie | `goreleaser check` w CI | DONE |
-| T8 | P3 | CI acceptance: czeka na start zabbix-server (locki DB przy pierwszym starcie blokowaly `host.create`), lekkie template'y w tescie hosta, zrzut logow przy failu | `ci.yml` | DONE |
+| T8 | P3 | CI acceptance: czeka na start zabbix-server (locki DB przy pierwszym starcie blokowaly `host.create`), lekkie template'y w tescie hosta, zrzut logow przy failu, obrazy przypiete digestem | `ci.yml`, `docker-compose.acc.yml` | DONE |
+| T9 | P2 | CI egzekwuje C7: blokujacy grep na `os.Stderr/Stdout`, `fmt.Fprint/Print`, `log.` w kodzie providera; `example_deployment/` w `terraform fmt -check` | `ci.yml` | DONE |
 | T4 | P3 | `docker-compose.acc.yml` (upstream ignoruje `docker-compose.yml` jako plik lokalny): bez `version:`, obrazy `alpine-6.4.21`, healthchecki, porty na 127.0.0.1 | `docker compose -f docker-compose.acc.yml config` | DONE |
 
 ### 3.8 Dokumentacja
@@ -166,11 +172,13 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
 ## 5. Ryzyka pozostale
 
 - Utrata uprawnien = "not found" (patrz 3.2).
+- `TestAccProvider_APIToken` wymaga poswiadczen haslem (mintuje token); przy uruchomieniu
+  akceptacji samym tokenem jest pomijany.
 - `zabbix_host` bez interfejsu agenta (tylko SNMP) jest read-only w zakresie interfejsu;
   v0.3: blok `interface` (lista).
 - Zabbix 6.4 jest EOL; 7.0 LTS nietestowane (warning). Bearer auth jest gotowe na 7.x.
 - `esc_period` z makrem uzytkownika nie jest walidowane (nie da sie).
-- Namespace: README wskazuje `Tensai123/terraform-provider-zabbix`, `go.mod` i `source` w przykladach
-  `adi/...` - do ujednolicenia przez wlasciciela repo przed pierwszym tagiem (Registry wymaga zgodnosci).
+- Namespace ujednolicony na `Tensai123` (module path, `source`, docs, override). Jesli wlasciciel
+  publikuje pod innym namespace, zmiana jest mechaniczna (grep `Tensai123/zabbix`).
 - Environment `release` wymaga skonfigurowania required reviewers w ustawieniach repo, zeby faktycznie
   bramkowal uzycie klucza GPG.

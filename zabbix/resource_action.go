@@ -186,10 +186,17 @@ func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ in
 	}
 	for _, raw := range d.Get("condition").(*schema.Set).List() {
 		c := raw.(map[string]interface{})
-		if c["conditiontype"].(int) == 26 && c["value2"].(string) == "" {
+		// Elements with unknown values carry the SDK's unknown marker instead of
+		// typed values; they are validated by Zabbix at apply time.
+		ct, ctKnown := c["conditiontype"].(int)
+		v2, v2Known := c["value2"].(string)
+		if !ctKnown || !v2Known || isUnknownMarker(v2) {
+			continue
+		}
+		if ct == 26 && v2 == "" {
 			return fmt.Errorf("condition type 26 (event tag value) requires value2 (the tag name)")
 		}
-		if c["conditiontype"].(int) != 26 && c["value2"].(string) != "" {
+		if ct != 26 && v2 != "" {
 			return fmt.Errorf("value2 is only supported for condition type 26 (event tag value)")
 		}
 	}

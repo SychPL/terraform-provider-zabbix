@@ -20,7 +20,7 @@ state.
 terraform {
   required_providers {
     zabbix = {
-      source = "adi/zabbix"
+      source = "Tensai123/zabbix"
     }
   }
 }

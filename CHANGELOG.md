@@ -4,6 +4,10 @@
 
 ### Breaking changes
 
+- Module path and provider source are now `github.com/Tensai123/terraform-provider-zabbix`
+  / `Tensai123/zabbix` (previously `adi/...`), matching the repository that
+  publishes releases.
+
 - `zabbix_host.ip` is now optional; `use_ip`/`dns` select DNS-based connections.
 - `zabbix_action.condition` is a set (was a list): remove and re-add the
   resource from state if you rely on ordering (the provider was not published
@@ -38,10 +42,15 @@
   credentials are rejected.
 - Automatic single re-login when a username/password session expires; all
   concurrent callers share the result (including a failure).
-- `terraform import` for all resources.
-- `timeouts` blocks and context propagation to HTTP requests.
+- `terraform import` for all resources. Objects the provider cannot represent
+  (unsupported media type types, script parameters, action operation types,
+  operation conditions, custom expressions) are refused with a hint instead of
+  being silently rewritten.
+- `timeouts` blocks and context propagation to HTTP requests; the HTTP client
+  itself imposes no timeout, so `timeouts { create = "15m" }` is honoured.
 - Idempotent deletes.
-- `zabbix_host`: `name`, `enabled`, `description`, `use_ip`, `dns`.
+- `zabbix_host`: `name` (follows `host` unless configured), `enabled`,
+  `description`, `use_ip`, `dns`.
 - `zabbix_media_type`: SMTP port/security/verification/authentication,
   `username`, `password`; sensitive webhook parameter values; plan-time
   validation per media type (attributes of other types are rejected, a type
@@ -60,7 +69,9 @@
   on `docker-compose.acc.yml`, govulncheck, `terraform fmt` on examples,
   GoReleaser config check and snapshot build), pinned GitHub Actions and
   GoReleaser; the release workflow runs the full CI gate first, requires the
-  tag to be reachable from `main` and uses a `release` environment.
+  tag to be reachable from `main` and uses a `release` environment. CI also
+  fails on any stdout/stderr/log writes in provider code. Acceptance images
+  are pinned by digest.
 - Dependencies updated (terraform-plugin-sdk v2.40, grpc, x/net, x/text) and
   Go 1.25.13; `govulncheck` reports no known vulnerabilities.
 - Generated documentation in `docs/` and examples in `examples/`.

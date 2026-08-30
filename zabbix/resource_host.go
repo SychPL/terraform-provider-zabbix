@@ -108,8 +108,11 @@ func resourceHostCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ inte
 }
 
 func expandHost(d *schema.ResourceData) *HostSpec {
+	// The visible name follows the technical name unless it is configured
+	// explicitly; a Computed value carried over from state must not survive a
+	// rename of `host`.
 	name := d.Get("name").(string)
-	if name == "" {
+	if raw := d.GetRawConfig(); name == "" || (!raw.IsNull() && raw.GetAttr("name").IsNull()) {
 		name = d.Get("host").(string)
 	}
 	return &HostSpec{

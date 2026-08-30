@@ -175,6 +175,7 @@ resource "zabbix_host" "h" {
 			{
 				Config: cfgDNS,
 				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("zabbix_host.h", "name", name), // not configured -> follows host
 					resource.TestCheckResourceAttr("zabbix_host.h", "use_ip", "false"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "dns", "agent.example.test"),
 					resource.TestCheckResourceAttr("zabbix_host.h", "ip", ""),
@@ -398,6 +399,9 @@ resource "zabbix_action" "act" {
 
 func TestAccProvider_APIToken(t *testing.T) {
 	testAccPreCheck(t)
+	if os.Getenv("ZABBIX_API_TOKEN") != "" {
+		t.Skip("already authenticated with an API token; minting a test token requires password credentials")
+	}
 	c := testAccClient(t)
 	ctx := context.Background()
 	userID := testAccCurrentUserID(t, c)

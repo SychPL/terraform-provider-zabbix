@@ -13,6 +13,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
+// unknownMarker is the value the legacy SDK substitutes for unknown strings
+// inside set elements (sets cannot carry per-element unknown-ness).
+const unknownMarker = "74D93920-ED26-11E3-AC10-0800200C9A66"
+
+func isUnknownMarker(s string) bool { return s == unknownMarker }
+
 // planKnown reports whether every listed attribute is known in the plan.
 // Cross-attribute validation only runs on known values; values referencing
 // other resources are validated by Zabbix at apply time.
