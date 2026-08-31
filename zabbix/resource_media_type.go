@@ -600,6 +600,20 @@ func mediaTypeInts(mt *MediaType) (map[string]int, string, error) {
 			return nil, "", fmt.Errorf("has %s %d outside the supported schema range", field, ints[field])
 		}
 	}
+	binaries := map[string]string{"status": mt.Status}
+	if mtType == mediaTypeEmail {
+		binaries["smtp_verify_peer"], binaries["smtp_verify_host"] = mt.SMTPVerifyPeer, mt.SMTPVerifyHost
+	}
+	if mtType == mediaTypeWebhook {
+		binaries["process_tags"], binaries["show_event_menu"] = mt.ProcessTags, mt.ShowEventMenu
+	}
+	for field, raw := range binaries {
+		// Unknown values must not be silently normalised to false: the next
+		// update would write that false back to Zabbix.
+		if raw != "" && raw != "0" && raw != "1" {
+			return nil, "", fmt.Errorf("has %s %q outside the supported 0/1 values", field, raw)
+		}
+	}
 	attemptInterval := mediaTypeSchema["attempt_interval"].Default.(string)
 	if mt.AttemptInterval != "" {
 		attemptInterval = mt.AttemptInterval

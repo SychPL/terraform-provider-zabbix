@@ -24,6 +24,10 @@
   the supported model (unknown `evaltype`/`default_msg`, invalid escalation
   steps or condition values) is refused instead of adopted into state; the
   resolved-value validation before mutations repeats every schema range.
+- Binary API fields (host/media type/action `status`, `useip`, SMTP verify
+  flags, webhook menu flags, action pause flags) and interface addresses are
+  refused when unrepresentable instead of being normalised to false/defaults;
+  the docs describe the explicit-over-environment credential precedence.
 - A transport failure during the read confirming an "object missing" delete
   surfaces both causes; `localhost` is recognised case-insensitively; the
   acceptance helper client honours `ZABBIX_TLS_INSECURE`/`ZABBIX_CA_CERT_FILE`.

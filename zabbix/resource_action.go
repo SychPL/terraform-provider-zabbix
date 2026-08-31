@@ -448,6 +448,16 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 	if _, errs := validateEscPeriod(action.EscPeriod, "esc_period"); len(errs) > 0 {
 		return nil, fmt.Errorf("action %s; %s", errs[0], unmanageableHint)
 	}
+	for field, raw := range map[string]string{
+		"status": action.Status, "pause_suppressed": action.PauseSuppressed,
+		"pause_symptoms": action.PauseSymptoms, "notify_if_canceled": action.NotifyIfCanceled,
+	} {
+		// Unknown values must not be silently normalised to false: the next
+		// update would write status=1 or flag=0 back to Zabbix.
+		if raw != "" && raw != "0" && raw != "1" {
+			return nil, fmt.Errorf("action has %s %q outside the supported 0/1 values; %s", field, raw, unmanageableHint)
+		}
+	}
 	if len(action.RecoveryOperations) != 0 || len(action.UpdateOperations) != 0 {
 		return nil, fmt.Errorf("action has recovery or update operations which this provider does not support; %s", unmanageableHint)
 	}

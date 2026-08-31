@@ -1085,6 +1085,23 @@ func TestMediaTypeRead_RefusesOutOfRangeValues(t *testing.T) {
 			}
 		})
 	}
+	// Non-binary flag values must be refused too, not normalised to false.
+	okFix := ok.Replace(base)
+	for name, fixture := range map[string]string{
+		"status 2":           strings.Replace(okFix, `"status":"0"`, `"status":"2"`, 1),
+		"smtp_verify_peer 2": strings.Replace(okFix, `"smtp_verify_peer":"0"`, `"smtp_verify_peer":"2"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := fixtureServer(t, "mediatype.get", fixture)
+			d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+			d.SetId("45")
+			diags := resourceMediaType().ReadContext(context.Background(), d, c)
+			if !diags.HasError() || !strings.Contains(diags[0].Summary, "outside the supported 0/1") {
+				t.Fatalf("a non-binary flag must be refused, got %v", diags)
+			}
+		})
+	}
+
 	// The update preflight refuses exactly the same set, BEFORE mutating.
 	bad := strings.NewReplacer("%PROV%", "5", "%PORT%", "25", "%SEC%", "0", "%AUTH%", "0", "%ATT%", "3", "%AI%", "10s")
 	c := fixtureServer(t, "mediatype.get", bad.Replace(base))
@@ -1093,7 +1110,6 @@ func TestMediaTypeRead_RefusesOutOfRangeValues(t *testing.T) {
 	if diags := resourceMediaType().UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "outside the supported") {
 		t.Fatalf("the update preflight must refuse what Read refuses, got %v", diags)
 	}
-	_ = ok
 }
 
 func TestActionRead_RefusesOutOfModelValues(t *testing.T) {
@@ -1106,6 +1122,8 @@ func TestActionRead_RefusesOutOfModelValues(t *testing.T) {
 		"esc_step_from 0":  {strings.Replace(okAction, `"esc_step_from":"1"`, `"esc_step_from":"0"`, 1), "escalation steps"},
 		"severity 9":       {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"4","operator":"5","value":"9","value2":"","formulaid":"A"}`, 1), "outside 0-5"},
 		"value2 on type 0": {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"0","operator":"0","value":"25","value2":"x","formulaid":"A"}`, 1), "value2"},
+		"status 2":         {strings.Replace(okAction, `"status":"0"`, `"status":"2"`, 1), "outside the supported 0/1"},
+		"pause_symptoms 5": {strings.Replace(okAction, `"pause_symptoms":"0"`, `"pause_symptoms":"5"`, 1), "outside the supported 0/1"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := fixtureServer(t, "action.get", tc.fixture)
@@ -1393,6 +1411,36 @@ func TestHostGroupDelete_NonEmptyGroupHint(t *testing.T) {
 	diags := resourceHostGroup().DeleteContext(context.Background(), d, c)
 	if !diags.HasError() || !strings.Contains(diags[0].Summary, "still contains hosts") || d.Id() != "4" {
 		t.Fatalf("a refused group delete must carry the non-empty-group hint and keep the ID, got %v id=%q", diags, d.Id())
+	}
+}
+
+func TestHostRead_RefusesUnrepresentableValues(t *testing.T) {
+	// Unknown API values must be refused, not normalised to false/defaults:
+	// the next update would write the normalised value back to Zabbix.
+	base := `[{"hostid":"1","host":"h","name":"h","status":"%ST%","flags":"0","description":"",
+		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+		"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"%UIP%","ip":"192.0.2.1","dns":"","port":"%PORT%"}]}]`
+	for name, tc := range map[string]struct{ st, uip, port, want string }{
+		"status 2":   {"2", "1", "10050", "status"},
+		"useip 2":    {"0", "2", "10050", "useip"},
+		"port 99999": {"0", "1", "99999", "port"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := strings.NewReplacer("%ST%", tc.st, "%UIP%", tc.uip, "%PORT%", tc.port).Replace(base)
+			c := fixtureServer(t, "host.get", fixture)
+			d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{})
+			d.SetId("1")
+			diags := resourceHost().ReadContext(context.Background(), d, c)
+			if !diags.HasError() || !strings.Contains(diags[0].Summary, tc.want) || !strings.Contains(diags[0].Summary, "terraform state rm") {
+				t.Fatalf("want a refusal mentioning %q with the hint, got %v", tc.want, diags)
+			}
+			// The update preflight refuses the same shape BEFORE mutating.
+			d2 := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+			d2.SetId("1")
+			if diags := resourceHost().UpdateContext(context.Background(), d2, c); !diags.HasError() || !strings.Contains(diags[0].Summary, tc.want) {
+				t.Fatalf("the update preflight must refuse what Read refuses, got %v", diags)
+			}
+		})
 	}
 }
 

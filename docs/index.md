@@ -15,7 +15,10 @@ a 2-minute timeout; raise it per resource with a `timeouts` block
 (e.g. `timeouts { create = "15m" }`).
 
 Authenticate with an API token (`api_token`, recommended) or with `username` and
-`password` - the two methods are mutually exclusive. `tls_insecure` and
+`password` - the two methods are mutually exclusive within one source:
+configuring both explicitly (or both through `ZABBIX_*` environment variables)
+is rejected, while an explicit method takes precedence over credentials
+inherited from the environment and ignores them with a warning. `tls_insecure` and
 `ca_cert_file` are mutually exclusive as well. All arguments can also be
 provided through `ZABBIX_*` environment variables (explicit configuration
 wins). Sensitive values are masked in CLI output but stored in the Terraform

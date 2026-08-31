@@ -238,6 +238,35 @@ func resourceHostCreate(ctx context.Context, d *schema.ResourceData, m interface
 	return readAfterCreate(ctx, d, m, resourceHostRead, "host")
 }
 
+// unmanageableHost refuses API shapes d.Set could not have accepted (an
+// intermediary, a newer line): Read and the update preflight refuse exactly
+// the same set instead of normalising unknown values to false/defaults.
+func unmanageableHost(id string, host *Host) error {
+	if host.Status != "0" && host.Status != "1" {
+		return fmt.Errorf("host %s has status %q outside the supported 0/1 values; %s", id, host.Status, unmanageableHint)
+	}
+	iface := host.AgentInterface()
+	if iface == nil {
+		return nil
+	}
+	if iface.UseIP != "0" && iface.UseIP != "1" {
+		return fmt.Errorf("host %s has interface useip %q outside the supported 0/1 values; %s", id, iface.UseIP, unmanageableHint)
+	}
+	for _, check := range []struct {
+		validate     func(interface{}, string) ([]string, []error)
+		value, field string
+	}{
+		{validateIP, iface.IP, "ip"},
+		{validateDNS, iface.DNS, "dns"},
+		{validatePort, iface.Port, "port"},
+	} {
+		if _, errs := check.validate(check.value, check.field); len(errs) > 0 {
+			return fmt.Errorf("host %s interface: %s; %s", id, errs[0], unmanageableHint)
+		}
+	}
+	return nil
+}
+
 func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
@@ -246,6 +275,9 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 		return readError(ctx, d, "host", err)
 	}
 	if err := discoveredError("host", d.Id(), host.Flags); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := unmanageableHost(d.Id(), host); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -305,6 +337,9 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 		return diag.Errorf("reading host %s: %s", d.Id(), err)
 	}
 	if err := mutationFlagsError("host", d.Id(), host.Flags); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := unmanageableHost(d.Id(), host); err != nil {
 		return diag.FromErr(err)
 	}
 
