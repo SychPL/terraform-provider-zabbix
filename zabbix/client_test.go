@@ -499,8 +499,31 @@ func TestCall_NullErrorMemberIsMalformed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c2.DeleteHost(context.Background(), "1"); err == nil || !strings.Contains(err.Error(), "unparsable error member") {
+	if err := c2.DeleteHost(context.Background(), "1"); err == nil || !strings.Contains(err.Error(), "invalid error member") {
 		t.Fatalf("a lone null error member must be malformed, got %v", err)
+	}
+}
+
+func TestCall_PartialErrorObjectDoesNotTriggerRelogin(t *testing.T) {
+	// A syntactically valid envelope whose error object lacks the mandatory
+	// code/message fields but smuggles the session-expiry marker in "data"
+	// must be malformed - never a re-login plus a retried mutation.
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"data":"` + sessionTerminated + `"},"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewZabbixClient(ClientConfig{URL: srv.URL, Username: "u", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.token = "tok"
+	if err := c.DeleteHost(context.Background(), "1"); err == nil || !strings.Contains(err.Error(), "invalid error member") {
+		t.Fatalf("a partial error object must be malformed, got %v", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("the mutation must not be retried, got %d requests", requests.Load())
 	}
 }
 

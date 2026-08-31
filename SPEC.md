@@ -59,6 +59,7 @@ DONE = zaimplementowane i pokryte testem wskazanym w AC.
 | C14 | P2 | URL z userinfo odrzucany (nie wycieka do diagnostyki); `api_token` weryfikowany w configure przez `user.checkAuthentication` z parametrem `token` (niezalezne od uprawnien roli do metod API; wolane bez naglowka Authorization - potwierdzone empirycznie na 6.4.21) | `TestProviderConfigure_AuthValidation` | DONE |
 | C15 | P3 | Leniwe pierwsze logowanie tez single-flight | `TestCall_LazyFirstLoginIsSingleFlight` | DONE |
 | C16 | P2 | Single-flight loginu dzieli wynik (takze blad) ze wszystkimi oczekujacymi - nieudany re-login nie powoduje N kolejnych prob; wynik publikowany i `flight` czyszczony atomowo pod mutexem | `TestCall_FailedReloginIsSharedByWaiters` | DONE |
+| C29 | P1 | Obiekt `error` bez obowiazkowych pol JSON-RPC (`code`/`message`) = malformed: spreparowane samo `data` z markerem wygasniecia sesji nie wymusi re-loginu i powtorki mutacji (Codex r26) | `TestCall_PartialErrorObjectDoesNotTriggerRelogin` | DONE |
 | C27 | P2 | Koperta JSON-RPC: obecnosc pola `error` (nawet `null`) obok `result` = malformed, samotny `error: null` = malformed; `error` sledzone przez RawMessage (Codex r15) | `TestCall_NullErrorMemberIsMalformed` | DONE |
 | C26 | P2 | `mutate` weryfikuje ID mutowanego obiektu (puste/obce ID = blad, nie sukces; create-style: lista samych pustych ID = blad); `firstID` odrzuca puste ID (Codex r13) | `TestMutate_RejectsEmptyAndForeignIDs` | DONE |
 | C17 | P2 | Brak timeoutu na `http.Client` - deadline zawsze z ctx (timeouts zasobu; `configureTimeout` 2 min dla probe'ow providera), wiec `timeouts { create = "15m" }` dziala | `TestNewZabbixClient_NoImplicitTimeout`, `TestCall_ContextCancelled` | DONE |
@@ -141,6 +142,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | A3 | P2 | `operationtype` tylko 0; `evaltype` w {0,1,2}; kazda operacja >= 1 odbiorca; `subject`/`message` tylko z `default_msg=false` (API odrzuca inaczej); `esc_step_to` 0 lub >= `esc_step_from`; `esc_period` 0 lub >= 60s | `TestActionCustomizeDiff`, `TestParseZabbixDuration` | DONE |
 | A4 | P2 | `users` -> `opmessage_usr`; `opmessage_grp`/`opmessage_usr` ZAWSZE wysylane (rowniez puste) - Zabbix zachowuje starych odbiorcow gdy pole pominiete (potwierdzone testem) | krok 2 `TestAccAction_lifecycle` (grupy usuniete, user zostaje) | DONE |
 | A5 | P3 | `pause_suppressed`, `notify_if_canceled` jako pola akcji (nie operacji) | round-trip w `TestAccAction_lifecycle` | DONE |
+| A23 | P1 | Unknown `eventsource` odrzucane juz w PLANIE: ForceNew + unknown planowaloby destrukcyjny replace, ktorego Create moze odrzucic PO skasowaniu akcji (Codex r26) | przypadek "unknown eventsource" w `TestActionCustomizeDiff` | DONE |
 | A19 | P1 | Update akcji czyta biezacy obiekt i odmawia nadpisania ksztaltow spoza modelu dodanych po ostatnim refresh (recovery/update operations, opconditions) - `action.update` zastepuje operacje w calosci (Codex r17) | `TestActionUpdate_RefusesExternalUnmanagedShapes` | DONE |
 | A20 | P2 | Rownowazne zapisy czasu (`3600` vs `1h`) nie generuja wiecznego diffa: DiffSuppress porownuje sparsowane sekundy dla `esc_period` (akcja i operacja), `attempt_interval` i `timeout`; makra nigdy nie sa wygaszane; wartosc niekanoniczna przechodzi przez acceptance (auto-check pustego planu po apply) (GLM r19) | `TestSuppressEquivalentDuration`, `esc_period = "1800"` w `TestAccAction_lifecycle` | DONE |
 | A21 | P3 | Operacja bez `opmessage` = odmowa (refuse-not-guess, wczesniej cichy fallback "default message"); warning wersji wymienia wymog 6.4+ dla akcji (`pause_symptoms` zawsze wysylane); acceptance zalezne takze od unit-windows; `name` w liscie atrybutow importu hosta; testy: limit 32 MiB, override `timeouts` w acc (GLM r19) | `TestActionRead_RefusesOperationWithoutOpMessage`, `TestCall_OversizedResponseFails` | DONE |
@@ -272,6 +274,6 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   z realnym uzytkownikiem nie-Super-Admin oraz akceptacja na 7.0 LTS = zakres v0.3.
 - `esc_period` z makrem uzytkownika nie jest walidowane (nie da sie).
 - Namespace ujednolicony na `Tensai123` (module path, `source`, docs, override). Jesli wlasciciel
-  publikuje pod innym namespace, zmiana jest mechaniczna (grep `Tensai123/zabbix`).
+  publikuje pod innym namespace, zmiana jest mechaniczna (grep `SychPL/zabbix`).
 - Environment `release` wymaga skonfigurowania required reviewers w ustawieniach repo, zeby faktycznie
   bramkowal uzycie klucza GPG.

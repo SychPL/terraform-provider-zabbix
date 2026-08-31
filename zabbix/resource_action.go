@@ -217,6 +217,13 @@ func intIn(n int, list []int) bool {
 }
 
 func resourceActionCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	// eventsource is ForceNew with a single supported value: an unknown here
+	// would plan a destructive replace whose Create may then reject the
+	// resolved value - with the action already deleted. Unlike the other
+	// deferred unknowns this one is refused outright.
+	if !planKnown(d, "eventsource") {
+		return fmt.Errorf("eventsource must be a known value at plan time (only 0, trigger actions, is supported)")
+	}
 	if !planKnown(d, "condition", "operation") {
 		return nil
 	}

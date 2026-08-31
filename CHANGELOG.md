@@ -1,12 +1,26 @@
 # Changelog
 
+## v0.2.1 (2026-08-31)
+
+### Fixed
+
+- An unknown `eventsource` is rejected at plan time: ForceNew with an unknown
+  value would plan a destructive replace whose Create can reject the resolved
+  value after the action was already deleted.
+- A JSON-RPC error object missing the mandatory `code`/`message` fields is
+  treated as malformed; a forged bare `data` carrying the session-expiry
+  marker can no longer trigger a re-login and a retried mutation.
+- Documentation and tooling uniformly reference the `SychPL/zabbix` registry
+  namespace; CI blocks stale references.
+
 ## v0.2.0 (2026-08-31) - hardening
 
 ### Breaking changes
 
-- Module path and provider source are now `github.com/Tensai123/terraform-provider-zabbix`
-  / `Tensai123/zabbix` (previously `adi/...`), matching the repository that
-  publishes releases.
+- The provider source is `SychPL/zabbix` (previously `adi/...`), matching the
+  repository and registry namespace that publish the releases; the Go module
+  path stays `github.com/Tensai123/terraform-provider-zabbix` (code-only,
+  invisible to Terraform users).
 
 - `zabbix_host.ip` is now optional; `use_ip`/`dns` select DNS-based connections.
 - `zabbix_action.condition` is a set (was a list): remove and re-add the

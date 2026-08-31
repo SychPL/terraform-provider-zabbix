@@ -648,6 +648,7 @@ func TestActionCustomizeDiff(t *testing.T) {
 		{"no operations", map[string]interface{}{"name": "a"}, "Missing required argument"},
 		{"evaltype custom unsupported", map[string]interface{}{"name": "a", "evaltype": 3, "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, "expected evaltype"},
 		{"eventsource unsupported", map[string]interface{}{"name": "a", "eventsource": 1, "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, "expected eventsource"},
+		{"unknown eventsource", map[string]interface{}{"name": "a", "eventsource": unknown, "operation": op(map[string]interface{}{"users": []interface{}{"1"}})}, "must be a known value"},
 		{"value2 without tag type", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 0, "value": "1", "value2": "x"}}}, "only supported for condition type 26"},
 		{"tag type without value2", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "value": "prod"}}}, "requires value2"},
 		{"tag type ok", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 26, "operator": 2, "value": "prod", "value2": "env"}}}, ""},

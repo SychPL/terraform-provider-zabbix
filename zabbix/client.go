@@ -499,8 +499,11 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 			return fmt.Errorf("malformed JSON-RPC response from %s for %s: both result and error", c.url, method)
 		}
 		var rpcErr JsonRpcError
-		if string(rpcResp.Error) == "null" || json.Unmarshal(rpcResp.Error, &rpcErr) != nil {
-			return fmt.Errorf("malformed JSON-RPC response from %s for %s: unparsable error member", c.url, method)
+		if string(rpcResp.Error) == "null" || json.Unmarshal(rpcResp.Error, &rpcErr) != nil || rpcErr.Code == 0 || rpcErr.Message == "" {
+			// JSON-RPC 2.0 requires code and message; a partial object (e.g. a
+			// forged bare "data" carrying the session-expiry marker) must not
+			// steer error handling into a re-login and a retried mutation.
+			return fmt.Errorf("malformed JSON-RPC response from %s for %s: invalid error member", c.url, method)
 		}
 		return &rpcErr
 	}

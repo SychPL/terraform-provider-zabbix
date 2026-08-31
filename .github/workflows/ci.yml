@@ -45,6 +45,11 @@ jobs:
           if grep -rnE 'os\.Stderr|os\.Stdout|fmt\.Fprint|fmt\.Print|\blog\.|\bprint\(|\bprintln\(' --include='*.go' --exclude='*_test.go' zabbix/ main.go; then
             echo "::error::provider code must not write to stdout/stderr or the standard logger (use tflog without payloads)"; exit 1
           fi
+      - name: No stale registry namespace
+        run: |
+          if git grep -n "Tensai123/zabbix" -- ':!.reviews'; then
+            echo "::error::stale Tensai123/zabbix references - the provider publishes as SychPL/zabbix"; exit 1
+          fi
       - name: go mod tidy check
         run: go mod tidy && git diff --exit-code go.mod go.sum
       - name: Unit tests (race)
