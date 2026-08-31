@@ -805,6 +805,33 @@ func TestHostUpdate_InterfaceDeleteFailureKeepsID(t *testing.T) {
 	}
 }
 
+func TestHostUpdate_InterfaceVanishedMidUpdate(t *testing.T) {
+	// The agent interface was deleted externally between the preflight read
+	// and hostinterface.update: the operator gets the friendly "vanished"
+	// error, not a raw permissions-or-missing message.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.get":
+			return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+				"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`), nil
+		case "host.update":
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "hostinterface.update":
+			return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": "192.0.2.9"})
+	d.SetId("1")
+	diags := resourceHost().UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "vanished") || d.Id() != "1" {
+		t.Fatalf("a vanished interface must produce the friendly error with the ID kept, got %v id=%q", diags, d.Id())
+	}
+}
+
 func TestHostUpdate_FailedFinalReadSurfacesError(t *testing.T) {
 	// The mutations succeeded but the confirming Read fails on transport: the
 	// error must surface with the ID kept. Partial mode is already off at

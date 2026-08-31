@@ -487,6 +487,59 @@ resource "zabbix_media_type" "wh" {
 	})
 }
 
+func TestAccMediaTypeImport_ExternallyCreated(t *testing.T) {
+	// An object created outside Terraform (raw API, as from the UI) must
+	// import and converge to an empty plan - this exercises the provider
+	// against API-normalised values it did not write itself.
+	name := acctest.RandomWithPrefix("tfacc-ext-import")
+	cfg := testAccProviderConfig() + fmt.Sprintf(`
+resource "zabbix_media_type" "ext" {
+  name             = %q
+  type             = 4
+  script           = "return 'OK';"
+  timeout          = "45s"
+  max_attempts     = 4
+  attempt_interval = "15s"
+
+  parameter {
+    name  = "url"
+    value = "https://hooks.example.test/ext"
+  }
+}`, name)
+	var id string
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckGone(t, "zabbix_media_type.ext", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
+		Steps: []resource.TestStep{
+			{
+				PreConfig: func() {
+					var res map[string][]string
+					params := map[string]interface{}{
+						"name": name, "type": "4", "status": "0", "script": "return 'OK';",
+						"timeout": "45s", "maxattempts": "4", "attempt_interval": "15s",
+						"parameters": []interface{}{map[string]string{"name": "url", "value": "https://hooks.example.test/ext"}},
+					}
+					if err := testAccClient(t).Call(context.Background(), "mediatype.create", params, &res); err != nil {
+						t.Fatal(err)
+					}
+					if len(res["mediatypeids"]) != 1 {
+						t.Fatalf("unexpected mediatype.create result %v", res)
+					}
+					id = res["mediatypeids"][0]
+				},
+				Config:             cfg,
+				ResourceName:       "zabbix_media_type.ext",
+				ImportState:        true,
+				ImportStateIdFunc:  func(*terraform.State) (string, error) { return id, nil },
+				ImportStatePersist: true,
+			},
+			// The imported state must already match the configuration.
+			{Config: cfg, PlanOnly: true},
+		},
+	})
+}
+
 func TestAccMediaType_email(t *testing.T) {
 	name := acctest.RandomWithPrefix("tfacc-email")
 	cfg := func(port int, password string) string {
@@ -567,7 +620,13 @@ func TestAccAction_lifecycle(t *testing.T) {
 
 	base := testAccProviderConfig() + fmt.Sprintf(`
 resource "zabbix_host_group" "a" { name = "%s-a" }
-resource "zabbix_host_group" "b" { name = "%s-b" }
+resource "zabbix_host_group" "b" {
+  name = "%s-b"
+  # Serialised on purpose: two concurrent hostgroup.create calls on a virgin
+  # database race to insert the id-allocator row (ids_pkey duplicate key,
+  # "Database error occurred") when this test runs first.
+  depends_on = [zabbix_host_group.a]
+}
 resource "zabbix_media_type" "wh" {
   name   = "%s-wh"
   type   = 4
@@ -652,7 +711,12 @@ resource "zabbix_action" "act" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
-		CheckDestroy:      testAccCheckGone(t, "zabbix_action.act", func(c *ZabbixClient, id string) error { _, err := c.GetAction(context.Background(), id); return err }),
+		CheckDestroy: resource.ComposeTestCheckFunc(
+			testAccCheckGone(t, "zabbix_action.act", func(c *ZabbixClient, id string) error { _, err := c.GetAction(context.Background(), id); return err }),
+			testAccCheckGone(t, "zabbix_media_type.wh", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
+			testAccCheckGone(t, "zabbix_host_group.a", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
+			testAccCheckGone(t, "zabbix_host_group.b", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
+		),
 		Steps: []resource.TestStep{
 			{Config: cfg(name, opsBoth), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_action.act", "condition.#", "4"),

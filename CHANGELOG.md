@@ -14,11 +14,18 @@
   `terraform state rm` hint as every other unmanageable shape.
 - Deleting a host group that still contains hosts explains why Zabbix refused
   instead of surfacing a bare application error.
+- An agent interface deleted externally between plan and apply reports the
+  same clear "vanished" error as the other resources.
 
 ### Changed
 
 - Dependabot also watches the digest-pinned acceptance images (docker-compose
   ecosystem), so the tested Zabbix/Postgres versions do not silently age.
+- The action acceptance test verifies that its helper resources (media type,
+  host groups) are destroyed too.
+- New acceptance test imports an object created outside Terraform (raw API
+  seed) and asserts an empty plan; the README documents the unauthenticated
+  `apiinfo.version` probe and the stock objects the acceptance suite expects.
 
 ## v0.2.2 (2026-08-31)
 

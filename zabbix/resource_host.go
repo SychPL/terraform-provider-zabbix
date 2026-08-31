@@ -348,6 +348,12 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 		case iface != nil:
 			spec.InterfaceID = iface.InterfaceID
 			if err := client.UpdateHostInterface(ctx, spec); err != nil {
+				if IsObjectMissing(err) {
+					// A parallel automation deleted the interface between the
+					// preflight read and this call - same friendly contract
+					// as the other vanish paths.
+					return diag.Errorf("agent interface of host %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to recreate it", d.Id())
+				}
 				return diag.Errorf("updating host %s agent interface: %s", d.Id(), err)
 			}
 		default:

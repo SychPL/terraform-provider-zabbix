@@ -121,6 +121,12 @@ Terraform state. Use an encrypted, access-controlled state backend.
   succeeds but mutations fail with "Not authorized", a proxy is probably
   stripping the header (compare
   [ZBX-22952](https://support.zabbix.com/browse/ZBX-22952)).
+- Configure probes the API before any resource work: the unauthenticated
+  `apiinfo.version` call gates the supported-version check, then the
+  credentials are verified. A proxy or WAF that blocks `apiinfo.version`
+  therefore fails `terraform plan` even with valid credentials - allow that
+  method through (it exposes only the version string, and the provider
+  deliberately refuses to run blind against an unknown version).
 - Deletes are idempotent: an object already removed in Zabbix does not fail
   `terraform destroy`.
 - **Objects the provider cannot represent are refused, not rewritten.** If an
@@ -159,6 +165,12 @@ docker compose -f docker-compose.acc.yml down -v
 
 Append `-f docker-compose.acc-70.yml` to every `docker compose` call above to
 run the same suite against Zabbix 7.0 LTS.
+
+The suite assumes the stock objects of a fresh installation (the "Zabbix
+administrators" user group, the "Admin" user, the "OS processes by Zabbix
+agent" template) - exactly what the compose files provide. On a customised or
+localised instance those lookups fail fast with a clear error instead of
+touching unrelated objects.
 
 ### Local provider override
 

@@ -107,12 +107,15 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | H9 | P2 | Host bez zadnego interfejsu (puste `ip` i `dns`): create bez `interfaces`, dodanie adresu tworzy interfejs, usuniecie adresu z konfiguracji usuwa go (`hostinterface.delete`) - hosty na trapper/dependent items (wymaganie uzytkownika); niestandardowy `port` bez adresu odrzucany w planie (nigdy by nie konwergowal) | `TestHostResource_NoInterfaceLifecycle`, `TestAccHost_noInterface`, `TestHostCustomizeDiff` | DONE |
 | H10 | P3 | Read odmawia zarzadzania hostem z LLD (`flags != 0`); `host.get` nie zwraca szablonow (sprawdzone empirycznie - import ID szablonu daje not found) | `TestHostRead_RefusesDiscoveredHost` | DONE |
 | H7 | P2 | `templates_clear` liczone z aktualnego stanu API (template podpiety poza TF jest czyszczony, nie tylko odlaczany) | `TestHostUpdate_TemplatesClearFromAPIState` | DONE |
+| T23 | P3 | Import obiektu utworzonego POZA providerem (seed surowym API + import + pusty plan) pokryty akceptacyjnie; README dokumentuje sonde `apiinfo.version` przed konfiguracja oraz stockowe obiekty wymagane przez suite akceptacyjny (GLM r32) | `TestAccMediaTypeImport_ExternallyCreated` | DONE |
+| T22 | P3 | `CheckDestroy` testu akceptacyjnego akcji obejmuje takze zasoby pomocnicze (media type webhook, obie grupy hostow) - regresja ich Delete nie przejdzie cicho (Codex r33) | `TestAccAction_lifecycle` | DONE |
 | T21 | P3 | Idempotentny destroy akcji (objectMissing + potwierdzajacy get) pokryty testem na poziomie zasobu jak host/grupa/media type (GLM r31) | `TestActionResource_DeleteIdempotent` | DONE |
 | T20 | P3 | Luki testowe GLM r29: awaria `hostinterface.delete` w update (ID zachowane, blad widoczny); env `ZABBIX_CA_CERT_FILE` przeplywa do klienta end-to-end | `TestHostUpdate_InterfaceDeleteFailureKeepsID`, `TestProviderConfigure_EnvCACertFile` | DONE |
 | T19 | P3 | `CheckDestroy` obejmuje takze zasoby POMOCNICZE (grupy g/g2 w lifecycle hosta, grupa w tescie bez interfejsu i w sciezce Bearer) - pozorny sukces destroy nie kumuluje smieci w akceptacyjnym Zabbixie (GLM r26) | `TestAccHost_lifecycle`, `TestAccHost_noInterface`, `TestAccProvider_APIToken` | DONE |
 | T18 | P2 | Payloady asertowane co do WARTOSCI, nie ksztaltu: pelny action.create/update (warunki z value2, opmessage z subject/message, konkretne ID odbiorcow), host.update (hostid/host/name/grupy/szablony/templates_clear po ID), parametry webhooka verbatim z sekretem; sciezka Bearer sprawdza destroy OBU zasobow (Codex r29) | `TestActionParams_EventSourceOnlyOnCreate`, `TestUpdateHost_NoInterfacesAndTemplatesClear`, `TestMediaTypeParams_TypeAware`, `TestAccProvider_APIToken` | DONE |
 | T16 | P2 | Testy krytyczne zasilone PELNYM stanem sprzed zmiany: partial-state po nieudanej mutacji utrzymuje kazda stara wartosc (State() != nil wymagane) dla hostgroup/action/media; restricted `mediatype.get` zachowuje wszystkie istniejace atrybuty (w tym haslo); acceptance re-login naprawde ROWNOLEGLY z licznikiem `user.login` na transporcie (dokladnie 1) (Codex r27) | `TestPartialStateOnFailedUpdates`, `TestMediaTypeRead_RefusesRestrictedResponse`, `TestAccProvider_SessionRelogin` | DONE |
 | T14 | P3 | Testy wspolbieznosci re-loginu z barierami z TIMEOUTEM (regresja liczby zadan = czytelny blad, nie wiszace CI); test retry mutacji asertuje `Bearer tok1` przy pierwszym zadaniu i `tok2` przy retry (Codex r21) | `TestCall_ReloginOnceOnSessionExpiry`, `TestCall_FailedReloginIsSharedByWaiters`, `TestCall_MutationRetriedExactlyOnceAfterRelogin` | DONE |
+| H17 | P3 | Interfejs agenta usuniety zewnetrznie miedzy preflight a `hostinterface.update` = przyjazny blad "vanished" jak na pozostalych sciezkach (GLM r32) | `TestHostUpdate_InterfaceVanishedMidUpdate` | DONE |
 | H16 | P3 | `validateDNS` ogranicza charset do `[A-Za-z0-9._-]` (literowka typu `db01,,x` odpada w planie); delete niepustej grupy hostow niesie wskazowke "grupa z hostami nie moze byc usunieta" (GLM r31) | przypadki DNS w `TestHostCustomizeDiff`, `TestHostGroupDelete_NonEmptyGroupHint` | DONE |
 | H15 | P3 | Bariera LLD fail-closed takze na BRAK pola `flags` w mutacjach (Update/Delete odmawiaja, gdy odpowiedz nie niesie flags - posrednik nie moze otworzyc bariery przez wyciecie pola; Read pozostaje tolerancyjny); grupa usunieta zewnetrznie miedzy planem a apply = przyjazny blad "vanished" jak w pozostalych zasobach; `email_provider` round-trip w acceptance (GLM r30) | `TestHostMutations_RefuseDiscoveredHost` (wariant no-flags), `TestHostGroupUpdate_VanishedGroup`, `TestAccMediaType_email` | DONE |
 | H14 | P3 | Bariera LLD (`flags != 0`) na KAZDEJ sciezce mutujacej, nie tylko w Read: preflight w Update i wlasny preflight w Delete (z `-refresh=false` Read nie biegnie przed apply/destroy; stan po v0.1 moglby zmutowac hosta discovery) - wspolny `discoveredHostError`; drugi delete konczy sie na preflightcie bez mutujacego RPC (Codex r30) | `TestHostMutations_RefuseDiscoveredHost`, `TestHostResource_DeleteIdempotent` | DONE |
@@ -271,6 +274,15 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   (fakty w sekcji 4) - rozroznienie jest niemozliwe. Konwencja providerow Terraform:
   potwierdzona niewidocznosc = usuniete. Udokumentowane w docs/index i README
   ("The same applies to terraform destroy").
+- (GLM, r32) "SchemaVersion=1 + StateUpgraders dla migracji stanu v0.1->v0.2": zaden stan
+  v0.1 nie istnieje w obiegu - v0.1.0 upstreamu nigdy nie zostal opublikowany (release
+  padl bez artefaktow, Registry serwuje wylacznie 0.2.x), wiec upgrader migrowalby stan,
+  ktorego nikt nie ma; nota migracyjna w CHANGELOG pokrywa hipotetyczne buildy ze zrodel.
+  StateUpgraders wejda przy pierwszej realnej zmianie schematu po 0.2.
+- (GLM, r32) "Wspolna metatabela regul walidacji (CustomizeDiff/Create/preflight)":
+  odroczone do v0.3 (sekcja 2) - trzy miejsca sa zsynchronizowane i przypiete testami
+  wartosci; przebudowa na generowana tabele tuz przed wydaniem niesie wieksze ryzyko
+  regresji niz utrzymanie konwencji.
 - (GLM, r10) "Import ID szablonu jako hosta uszkadza szablon": obalone empirycznie -
   `host.get` z ID szablonu zwraca pusta liste na 6.4.21 (szablony nie sa hostami w API);
   dodatkowo Read odmawia hostow z LLD (`flags != 0`).
