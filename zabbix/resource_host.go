@@ -268,10 +268,6 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 		return diag.Errorf("reading host %s: %s", d.Id(), err)
 	}
 
-	// SDKv2 writes the planned values into state even when Update fails (see
-	// ResourceData.Partial); partial mode preserves the previous state until
-	// every mutation is confirmed, then the final Read refreshes everything.
-	d.Partial(true)
 	if d.HasChanges("host", "name", "enabled", "description", "groups", "templates") {
 		// Templates to clear are computed from what Zabbix currently has linked
 		// (not only from state) so that a template linked outside Terraform is
