@@ -134,11 +134,19 @@ go test ./...                       # unit tests (no network)
 
 ```sh
 docker compose -f docker-compose.acc.yml up -d --wait   # Zabbix 6.4 on http://localhost:8082 (Admin / zabbix)
+# Wait for the server's first-start DB maintenance (API writes block on its
+# locks) and give the fresh PostgreSQL planner statistics - without these two
+# steps host tests can stall on locks for minutes:
+until docker compose -f docker-compose.acc.yml logs zabbix-server | grep -q 'server #0 started'; do sleep 5; done
+docker compose -f docker-compose.acc.yml exec -T zabbix-db psql -U zabbix -q -c "ANALYZE"
 TF_ACC=1 ZABBIX_URL=http://localhost:8082/api_jsonrpc.php \
   ZABBIX_USERNAME=Admin ZABBIX_PASSWORD=zabbix \
   go test ./zabbix -run TestAcc -count=1 -v
 docker compose -f docker-compose.acc.yml down -v
 ```
+
+Append `-f docker-compose.acc-70.yml` to every `docker compose` call above to
+run the same suite against Zabbix 7.0 LTS.
 
 ### Local provider override
 

@@ -30,7 +30,7 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME is not reachable from main"; exit 1; }
 
   ci:
-    # Full gate: lint, unit, docs drift and acceptance tests against Zabbix 6.4.
+    # Full gate: lint, unit, docs drift and the acceptance matrix (Zabbix 6.4 and 7.0).
     needs: preflight
     uses: ./.github/workflows/ci.yml
 

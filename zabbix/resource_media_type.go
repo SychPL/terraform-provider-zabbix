@@ -126,7 +126,7 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Optional:     true,
 			Default:      0,
 			ValidateFunc: validation.IntInSlice([]int{0, 1, 2}),
-			Description:  "SMTP connection security: 0 - none, 1 - STARTTLS, 2 - SSL/TLS (Email).",
+			Description:  "SMTP connection security: 0 - none, 1 - STARTTLS, 2 - SSL/TLS (Email). With `smtp_authentication = 1` and security 0 the credentials travel to the SMTP server unencrypted - use 1 or 2 unless the relay is local.",
 		},
 		"smtp_verify_peer": {
 			Type:        schema.TypeBool,

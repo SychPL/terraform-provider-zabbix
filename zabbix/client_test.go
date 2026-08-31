@@ -663,9 +663,15 @@ func TestNewZabbixClient_TLS(t *testing.T) {
 	if c.TLSConfig().RootCAs == nil {
 		t.Error("ca_cert_file must set RootCAs")
 	}
-	// The custom CA is added to the system pool, not used instead of it.
-	if sys, err := x509.SystemCertPool(); err == nil && sys != nil && c.TLSConfig().RootCAs.Equal(x509.NewCertPool()) {
-		t.Error("RootCAs must extend the system pool, not be empty")
+	// The custom CA must EXTEND the system pool, not replace it: reconstruct
+	// the exact expected pool and compare (a regression swapping the system
+	// pool for an empty one fails the equality).
+	if sys, err := x509.SystemCertPool(); err == nil && sys != nil {
+		want := sys.Clone()
+		want.AddCert(srv.Certificate())
+		if !c.TLSConfig().RootCAs.Equal(want) {
+			t.Error("RootCAs must be the system pool plus the configured CA")
+		}
 	}
 	if _, err := c.GetVersion(context.Background()); err != nil {
 		t.Errorf("request with custom CA failed: %v", err)

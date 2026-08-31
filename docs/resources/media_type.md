@@ -103,7 +103,7 @@ resource "zabbix_media_type" "email" {
 - `smtp_email` (String) Sender email address. Required for type 0 (Email).
 - `smtp_helo` (String) SMTP HELO. Required for type 0 (Email).
 - `smtp_port` (Number) SMTP server port (Email).
-- `smtp_security` (Number) SMTP connection security: 0 - none, 1 - STARTTLS, 2 - SSL/TLS (Email).
+- `smtp_security` (Number) SMTP connection security: 0 - none, 1 - STARTTLS, 2 - SSL/TLS (Email). With `smtp_authentication = 1` and security 0 the credentials travel to the SMTP server unencrypted - use 1 or 2 unless the relay is local.
 - `smtp_server` (String) SMTP server address. Required for type 0 (Email).
 - `smtp_verify_host` (Boolean) Verify the SMTP server host name in the certificate (Email).
 - `smtp_verify_peer` (Boolean) Verify the SMTP server certificate (Email).

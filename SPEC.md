@@ -167,6 +167,8 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | P4 | P2 | Minimalna wersja: 6.4.0 odrzucane w configure (brak `token` w `user.checkAuthentication` przed 6.4.1, ZBXNEXT-8012); inne linie = warning | `TestProviderConfigure_RejectsZabbix640`, `TestPlainHTTPWarning` | DONE |
 | P5 | P3 | Zrodlo credentiali (HCL vs env) rozstrzygane po `GetRawConfig` (fallback: porownanie z env w harnessie testowym), nie po rownosci wartosci; warningi towarzysza bledom configure (operator widzi np. warning o plain HTTP takze gdy configure pada); sciezki bledow configure (apiinfo.version, user.login) pokryte testami | `TestWrittenInRaw`, `TestProviderConfigure_ConfigureErrorPaths`, przypadek "remote http warns" w `TestProviderConfigure_AuthValidation` | DONE |
 | P6 | P1 | Update w trybie partial: SDKv2 zapisuje planowane wartosci do stanu mimo bledu update (udokumentowane w `ResourceData.Partial`) - poprzedni stan zachowany do potwierdzenia mutacji, `Partial(false)` przed koncowym Read (Codex r13) | asercja stanu w `TestHostUpdate_PartialFailureKeepsID` | DONE |
+| P22 | P1 | Macierz goreleasera bez `windows/arm` (target usuniety w Go 1.25 - snapshot i release padalyby na cross-kompilacji zanim powstanie artefakt); test puli CA porownuje ODTWORZONA oczekiwana pule (system + wlasny cert) przez `Equal` (Codex r24) | lokalny snapshot goreleasera, `TestNewZabbixClient_TLS` | DONE |
+| P21 | P3 | Domkniecia GLM r24: usuniete zdublowane (martwe) `Partial(true)` w update hosta; lokalna instrukcja akceptacji w README z krokami z CI (wait na `server #0 started` + `ANALYZE`, plus overlay 7.0); komentarz joba `ci` w release.yml zgodny z macierza. Do 10/10 GLM zada faktycznego release v0.2.0 (tag przez pipeline z GPG i publikacja w Registry) - akcja wlasciciela repo, poza petla recenzji | README, release.yml | DONE |
 | P20 | P2 | Rozwiazane enumy walidowane KOMPLETNIE przed mutacja: `type` media (spoza 0/1/2/4), `evaltype`, `conditiontype` (symetrycznie do eventsource/operationtype); TLS proxy w acceptance bez zdublowanej sciezki (SingleHostReverseProxy skleja target.Path z request.Path) + asercja odebranej sciezki; transportowy test GetBody==nil na zadaniu z rawCall (Codex r23) | rozszerzone testy apply-validation, `TestRawCall_TransportSeesNoGetBody` | DONE |
 | P19 | P3 | `operationtype` sprawdzane takze na wartosci ROZWIAZANEJ (symetria z eventsource - unknown nie moze utworzyc akcji, ktorej Read od razu odmowi); usunieta martwa stala `SupportedVersionPrefix` (jedno zrodlo prawdy: `SupportedVersionPrefixes`) (GLM r23) | rozszerzony `TestActionApplyValidation_RejectsResolvedConflicts` | DONE |
 | P18 | P3 | `eventsource` sprawdzane takze na wartosci ROZWIAZANEJ (unknown w planie nie wysle nietriggerowej akcji do API); opisy retry doprecyzowane: single-shot dotyczy bledow transportu, jedyny wyjatek to pojedyncze powtorzenie zadania odrzuconego przez wygasla sesje (Codex r22) | rozszerzony `TestActionApplyValidation_RejectsResolvedConflicts`, README i CHANGELOG | DONE |
@@ -242,6 +244,11 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   swiadomy wybor, lokalne laby i test acceptance chodza po http.
 - (GLM, r7) "Wspoldzielona mapa schematu media type": jedna instancja providera na proces,
   SDK nie mutuje schematu po InternalValidate; przebudowa per wywolanie bez zysku.
+- (Codex, r24) "Odrzucac smtp_authentication=1 przy smtp_security=0": Zabbix dopuszcza te
+  kombinacje (typowy przyklad: lokalny relay 127.0.0.1:25), a twardy blad uniemozliwilby
+  zarzadzanie legalnie zaimportowanymi obiektami (konfiguracja musi odwzorowac stan).
+  Ryzyko opisane w dokumentacji `smtp_security` - swiadomie poziom dokumentacji/warningu,
+  analogicznie do plain HTTP w providerze.
 - (Codex, r12) "Destroy przy utracie uprawnien konczy sie pozornym sukcesem": API Zabbix
   zwraca ten sam blad dla brakujacego obiektu i braku uprawnien, a Get pusty wynik
   (fakty w sekcji 4) - rozroznienie jest niemozliwe. Konwencja providerow Terraform:

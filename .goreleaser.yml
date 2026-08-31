@@ -21,6 +21,10 @@ builds:
         goarch: "386"
       - goos: darwin
         goarch: arm
+      # windows/arm was removed in Go 1.25; without this the snapshot and
+      # release cross-compilation fail before producing any artifact.
+      - goos: windows
+        goarch: arm
     flags:
       - -trimpath
     ldflags:

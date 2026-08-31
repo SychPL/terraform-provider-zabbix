@@ -104,6 +104,8 @@
   create instead of stranding a freshly created action as unmanageable;
   the same applies to resolved `evaltype`, `conditiontype` and media type
   `type` values.
+- The release build matrix excludes windows/arm (the target was removed in
+  Go 1.25); cross-compilation no longer fails before producing artifacts.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 
