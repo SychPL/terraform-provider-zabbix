@@ -46,6 +46,16 @@ func testAccPreCheck(t *testing.T) {
 	if os.Getenv("ZABBIX_API_TOKEN") != "" && (os.Getenv("ZABBIX_USERNAME") != "" || os.Getenv("ZABBIX_PASSWORD") != "") {
 		t.Fatal("set either ZABBIX_API_TOKEN or ZABBIX_USERNAME+ZABBIX_PASSWORD, not both: the provider rejects two ambient auth methods")
 	}
+	if want := os.Getenv("ZABBIX_ACC_EXPECT_VERSION"); want != "" {
+		// The CI matrix asserts it really talks to the Zabbix line it names.
+		v, err := testAccClient(t).GetVersion(context.Background())
+		if err != nil {
+			t.Fatalf("ZABBIX_ACC_EXPECT_VERSION is set but apiinfo.version failed: %v", err)
+		}
+		if v != want && !strings.HasPrefix(v, want+".") {
+			t.Fatalf("connected Zabbix reports version %s, expected the %s line", v, want)
+		}
+	}
 }
 
 // testAccClient returns a raw API client for test setup and verification.

@@ -2,6 +2,7 @@ package zabbix
 
 import (
 	"context"
+	"errors"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -47,6 +48,9 @@ func resourceHostGroupRead(ctx context.Context, d *schema.ResourceData, m interf
 	if err != nil {
 		return readError(ctx, d, "host group", err)
 	}
+	if err := discoveredError("host group", d.Id(), group.Flags); err != nil {
+		return diag.FromErr(err)
+	}
 	if err := d.Set("name", group.Name); err != nil {
 		return diag.FromErr(err)
 	}
@@ -60,6 +64,19 @@ func resourceHostGroupUpdate(ctx context.Context, d *schema.ResourceData, m inte
 	// ResourceData.Partial); partial mode preserves the previous state until
 	// the mutation is confirmed, then the final Read refreshes everything.
 	d.Partial(true)
+	// Preflight: groups created by a discovery rule's group prototype
+	// (flags=4) must not be renamed; with -refresh=false this is the only
+	// barrier before the mutation.
+	group, err := client.GetHostGroup(ctx, d.Id())
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return diag.Errorf("host group %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to refresh and recreate it", d.Id())
+	case err != nil:
+		return diag.Errorf("reading host group %s before update: %s", d.Id(), err)
+	}
+	if err := mutationFlagsError("host group", d.Id(), group.Flags); err != nil {
+		return diag.FromErr(err)
+	}
 	if d.HasChange("name") {
 		if err := client.UpdateHostGroup(ctx, d.Id(), d.Get("name").(string)); err != nil {
 			if IsObjectMissing(err) {
@@ -75,7 +92,18 @@ func resourceHostGroupUpdate(ctx context.Context, d *schema.ResourceData, m inte
 func resourceHostGroupDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
-	err := deleteError(ctx, client.DeleteHostGroup(ctx, d.Id()), func(ctx context.Context) error {
+	// Preflight: never delete a group owned by a discovery rule.
+	group, err := client.GetHostGroup(ctx, d.Id())
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return nil // already gone
+	case err != nil:
+		return diag.Errorf("reading host group %s before delete: %s", d.Id(), err)
+	}
+	if err := mutationFlagsError("host group", d.Id(), group.Flags); err != nil {
+		return diag.FromErr(err)
+	}
+	err = deleteError(ctx, client.DeleteHostGroup(ctx, d.Id()), func(ctx context.Context) error {
 		_, err := client.GetHostGroup(ctx, d.Id())
 		return err
 	})

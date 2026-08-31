@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
@@ -705,6 +706,25 @@ func TestPartialStateOnFailedUpdates(t *testing.T) {
 			map[string]string{"name": "old-name"},
 			map[string]interface{}{"name": "planned"},
 			func(req rpcRequest) (interface{}, *JsonRpcError) { return nil, boom }},
+		{"host", resourceHost(),
+			map[string]string{
+				"host": "old-host", "name": "old-host", "enabled": "true", "description": "",
+				"groups.#": "1", "groups.497201066": "2",
+				"templates.#": "0",
+				"use_ip":      "true", "ip": "192.0.2.1", "dns": "", "port": "10050",
+			},
+			map[string]interface{}{"host": "old-host", "groups": []interface{}{"2"}, "ip": "192.0.2.9"},
+			func(req rpcRequest) (interface{}, *JsonRpcError) {
+				switch req.Method {
+				case "host.get":
+					return json.RawMessage(`[{"hostid":"45","host":"old-host","name":"old-host","status":"0","flags":"0","description":"",
+						"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+						"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`), nil
+				case "host.update":
+					return map[string][]string{"hostids": {"45"}}, nil
+				}
+				return nil, boom
+			}},
 		{"action", resourceAction(),
 			map[string]string{
 				"name": "old-name", "eventsource": "0", "enabled": "true", "esc_period": "1h", "evaltype": "0",
@@ -975,7 +995,7 @@ func TestHostGroupResource_CRUD(t *testing.T) {
 		case "hostgroup.create", "hostgroup.update", "hostgroup.delete":
 			return map[string][]string{"groupids": {"42"}}, nil
 		case "hostgroup.get":
-			return json.RawMessage(`[{"groupid":"42","name":"g2"}]`), nil
+			return json.RawMessage(`[{"groupid":"42","name":"g2","flags":"0"}]`), nil
 		}
 		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
 	})
@@ -1244,6 +1264,9 @@ func TestHostGroupUpdate_VanishedGroup(t *testing.T) {
 	// The group was deleted externally between plan and apply: the error must
 	// say so instead of surfacing the raw permissions-or-missing API message.
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method == "hostgroup.get" {
+			return json.RawMessage(`[]`), nil
+		}
 		return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
 	})
 	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
@@ -1284,7 +1307,12 @@ func TestHostGroupDelete_NonEmptyGroupHint(t *testing.T) {
 	// Zabbix refuses to delete a group that still contains hosts; the
 	// operator should see why, not a bare application error.
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
-		if req.Method != "hostgroup.delete" {
+		switch req.Method {
+		case "hostgroup.get":
+			return json.RawMessage(`[{"groupid":"4","name":"g","flags":"0"}]`), nil
+		case "hostgroup.delete":
+			return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: `host "h1" cannot be without host group`}
+		default:
 			t.Errorf("unexpected method %s", req.Method)
 		}
 		return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: `host "h1" cannot be without host group`}
@@ -1295,6 +1323,35 @@ func TestHostGroupDelete_NonEmptyGroupHint(t *testing.T) {
 	diags := resourceHostGroup().DeleteContext(context.Background(), d, c)
 	if !diags.HasError() || !strings.Contains(diags[0].Summary, "still contains hosts") || d.Id() != "4" {
 		t.Fatalf("a refused group delete must carry the non-empty-group hint and keep the ID, got %v id=%q", diags, d.Id())
+	}
+}
+
+func TestHostGroupMutations_RefuseDiscoveredGroup(t *testing.T) {
+	// flags=4: the group is owned by a discovery rule's group prototype and
+	// must not be read into state, renamed or deleted by the provider.
+	lld := fixtureServer(t, "hostgroup.get", `[{"groupid":"7","name":"lld","flags":"4"}]`)
+	r := resourceHostGroup()
+	for name, op := range map[string]func(context.Context, *schema.ResourceData, interface{}) diag.Diagnostics{
+		"read": r.ReadContext, "update": r.UpdateContext, "delete": r.DeleteContext,
+	} {
+		d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"name": "lld"})
+		d.SetId("7")
+		if diags := op(context.Background(), d, lld); !diags.HasError() || !strings.Contains(diags[0].Summary, "low-level discovery") {
+			t.Fatalf("%s of an LLD group must be refused, got %v", name, diags)
+		}
+	}
+
+	// A response without any flags field cannot prove the group is not
+	// LLD-owned: mutations are fail-closed on it (Read stays tolerant).
+	noFlags := fixtureServer(t, "hostgroup.get", `[{"groupid":"7","name":"g"}]`)
+	for name, op := range map[string]func(context.Context, *schema.ResourceData, interface{}) diag.Diagnostics{
+		"update": r.UpdateContext, "delete": r.DeleteContext,
+	} {
+		d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"name": "g"})
+		d.SetId("7")
+		if diags := op(context.Background(), d, noFlags); !diags.HasError() || !strings.Contains(diags[0].Summary, "no flags field") {
+			t.Fatalf("a flagless response must refuse the %s, got %v", name, diags)
+		}
 	}
 }
 

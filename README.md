@@ -134,7 +134,7 @@ Terraform state. Use an encrypted, access-controlled state backend.
   model (action operation types other than "send message", operation
   conditions, custom condition expressions, non-trigger event sources, script
   media type parameters, media type types other than email/script/SMS/webhook,
-  hosts created by low-level discovery, restricted media type reads),
+  hosts and host groups created by low-level discovery, restricted media type reads),
   `Read` fails with an explanation. Because refresh runs before `plan` and
   `destroy`, detach such an object with `terraform state rm <address>` (or
   change it in Zabbix) instead of letting Terraform overwrite it.

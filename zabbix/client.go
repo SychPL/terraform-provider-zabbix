@@ -129,6 +129,7 @@ func isSessionTerminated(err error) bool {
 type HostGroup struct {
 	GroupID string `json:"groupid"`
 	Name    string `json:"name"`
+	Flags   string `json:"flags"` // "0" plain, "4" created by a discovery rule's group prototype
 }
 
 type Host struct {
@@ -618,7 +619,7 @@ func (c *ZabbixClient) CreateHostGroup(ctx context.Context, name string) (string
 func (c *ZabbixClient) GetHostGroup(ctx context.Context, id string) (*HostGroup, error) {
 	params := map[string]interface{}{
 		"groupids": []string{id},
-		"output":   []string{"groupid", "name"},
+		"output":   []string{"groupid", "name", "flags"},
 	}
 	var res []HostGroup
 	if err := c.Call(ctx, "hostgroup.get", params, &res); err != nil {

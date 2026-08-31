@@ -12,29 +12,30 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
-// discoveredHostError refuses hosts created by low-level discovery; they are
-// owned by their discovery rule and the barrier must hold on EVERY mutating
-// path (with -refresh=false Read never runs before apply or destroy). Read
-// tolerates a missing flags field (objects from intermediaries), mutations
-// use the fail-closed mutationFlagsError instead.
-func discoveredHostError(id, flags string) error {
+// discoveredError refuses objects created by low-level discovery (hosts and
+// host groups both carry flags); they are owned by their discovery rule and
+// the barrier must hold on EVERY mutating path (with -refresh=false Read
+// never runs before apply or destroy). Read tolerates a missing flags field
+// (objects from intermediaries), mutations use the fail-closed
+// mutationFlagsError instead.
+func discoveredError(kind, id, flags string) error {
 	if flags == "" || flags == "0" {
 		return nil
 	}
-	return fmt.Errorf("host %s was created by low-level discovery (flags=%s) and cannot be managed by this provider; %s", id, flags, unmanageableHint)
+	return fmt.Errorf("%s %s was created by low-level discovery (flags=%s) and cannot be managed by this provider; %s", kind, id, flags, unmanageableHint)
 }
 
 // mutationFlagsError is the fail-closed variant for Update and Delete: when
 // the response carries no flags field at all, the LLD barrier cannot be
 // verified and the mutation is refused rather than waved through.
-func mutationFlagsError(id, flags string) error {
+func mutationFlagsError(kind, id, flags string) error {
 	if flags == "0" {
 		return nil
 	}
 	if flags == "" {
-		return fmt.Errorf("host %s: the API response carries no flags field, so the low-level-discovery barrier cannot be verified; refusing to mutate", id)
+		return fmt.Errorf("%s %s: the API response carries no flags field, so the low-level-discovery barrier cannot be verified; refusing to mutate", kind, id)
 	}
-	return discoveredHostError(id, flags)
+	return discoveredError(kind, id, flags)
 }
 
 // defaultAgentPort is the schema default for "port"; CustomizeDiff and Read
@@ -244,7 +245,7 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 	if err != nil {
 		return readError(ctx, d, "host", err)
 	}
-	if err := discoveredHostError(d.Id(), host.Flags); err != nil {
+	if err := discoveredError("host", d.Id(), host.Flags); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -303,7 +304,7 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 		}
 		return diag.Errorf("reading host %s: %s", d.Id(), err)
 	}
-	if err := mutationFlagsError(d.Id(), host.Flags); err != nil {
+	if err := mutationFlagsError("host", d.Id(), host.Flags); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -381,7 +382,7 @@ func resourceHostDelete(ctx context.Context, d *schema.ResourceData, m interface
 	case err != nil:
 		return diag.Errorf("reading host %s before delete: %s", d.Id(), err)
 	}
-	if err := mutationFlagsError(d.Id(), host.Flags); err != nil {
+	if err := mutationFlagsError("host", d.Id(), host.Flags); err != nil {
 		return diag.FromErr(err)
 	}
 

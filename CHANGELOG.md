@@ -16,6 +16,9 @@
   instead of surfacing a bare application error.
 - An agent interface deleted externally between plan and apply reports the
   same clear "vanished" error as the other resources.
+- Host groups created by a discovery rule's group prototype (`flags=4`) are
+  refused like discovered hosts: Read refuses to adopt them and Update/Delete
+  are fail-closed (a response without a `flags` field refuses the mutation).
 
 ### Changed
 
@@ -26,6 +29,8 @@
 - New acceptance test imports an object created outside Terraform (raw API
   seed) and asserts an empty plan; the README documents the unauthenticated
   `apiinfo.version` probe and the stock objects the acceptance suite expects.
+- The CI acceptance matrix asserts the Zabbix version it actually talks to,
+  and the partial-state regression test covers hosts as well.
 
 ## v0.2.2 (2026-08-31)
 
