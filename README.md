@@ -164,7 +164,8 @@ docker compose -f docker-compose.acc.yml down -v
 ```
 
 Append `-f docker-compose.acc-70.yml` to every `docker compose` call above to
-run the same suite against Zabbix 7.0 LTS.
+run the same suite against Zabbix 7.0 LTS, or `-f docker-compose.acc-641.yml`
+for Zabbix 6.4.1 - the declared minimum version, also part of the CI matrix.
 
 The suite assumes the stock objects of a fresh installation (the "Zabbix
 administrators" user group, the "Admin" user, the "OS processes by Zabbix

@@ -39,6 +39,8 @@
   `apiinfo.version` probe and the stock objects the acceptance suite expects.
 - The CI acceptance matrix asserts the Zabbix version it actually talks to,
   and the partial-state regression test covers hosts as well.
+- The acceptance matrix also runs against Zabbix 6.4.1 - the declared minimum
+  version - via a digest-pinned overlay.
 
 ## v0.2.2 (2026-08-31)
 

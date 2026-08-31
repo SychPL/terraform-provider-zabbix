@@ -1,0 +1,7 @@
+# Zabbix 6.4.1 overlay - the DECLARED MINIMUM version of the provider:
+#   docker compose -f docker-compose.acc.yml -f docker-compose.acc-641.yml up -d --wait
+services:
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-6.4.1@sha256:2b239ab6db5e45c892b5c9d1e00137c1629f479d7ee7082ee8d56ed2f955d5d7
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-6.4.1@sha256:581a56fad9211deb1d0f137b5c447531c84393145bcef24afd8077350690517b

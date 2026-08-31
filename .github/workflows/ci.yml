@@ -116,6 +116,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - zabbix: "6.4.1"
+            # The declared minimum version must stay actually tested.
+            compose: "-f docker-compose.acc.yml -f docker-compose.acc-641.yml"
           - zabbix: "6.4"
             compose: "-f docker-compose.acc.yml"
           - zabbix: "7.0"
