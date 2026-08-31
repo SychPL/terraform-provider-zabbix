@@ -512,6 +512,16 @@ func TestHostApplyValidation_RejectsInvalidResolvedValues(t *testing.T) {
 	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "dns is required") {
 		t.Fatalf("an invalid resolved address must fail before update, got %v", diags)
 	}
+	// Formats that resolved to garbage must also fail before any mutation.
+	dIP := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": "agent.example.test"})
+	if diags := r.CreateContext(context.Background(), dIP, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "not a valid IP") {
+		t.Fatalf("a DNS name that resolved into ip must fail before create, got %v", diags)
+	}
+	dPort := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}, "ip": "192.0.2.7", "port": "70000"})
+	dPort.SetId("1")
+	if diags := r.UpdateContext(context.Background(), dPort, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "port number 1-65535") {
+		t.Fatalf("a resolved out-of-range port must fail before update, got %v", diags)
+	}
 	// Partial mode is on from the first statement: a failure before the API
 	// must not persist the planned values either.
 	if st := d.State(); st != nil && st.Attributes["use_ip"] == "false" {
@@ -563,6 +573,23 @@ func TestActionApplyValidation_RejectsResolvedConflicts(t *testing.T) {
 		"condition": []interface{}{map[string]interface{}{"conditiontype": 5, "value": "x"}}}
 	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawCT), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "conditiontype 5 is not supported") {
 		t.Fatalf("a resolved unsupported conditiontype must fail before create, got %v", diags)
+	}
+
+	// Durations and step bounds that resolved to invalid values at apply time.
+	rawEsc := map[string]interface{}{"name": "a", "esc_period": "10",
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawEsc), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "between 60 seconds") {
+		t.Fatalf("a resolved too-short esc_period must fail before create, got %v", diags)
+	}
+	rawOpEsc := map[string]interface{}{"name": "a",
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}, "esc_period": "30"}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawOpEsc), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "between 60 seconds") {
+		t.Fatalf("a resolved invalid operation esc_period must fail before create, got %v", diags)
+	}
+	rawFrom := map[string]interface{}{"name": "a",
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}, "esc_step_from": 0}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawFrom), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "esc_step_from must be >= 1") {
+		t.Fatalf("a resolved zero esc_step_from must fail before create, got %v", diags)
 	}
 }
 

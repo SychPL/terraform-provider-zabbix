@@ -135,6 +135,17 @@ func validateHostAddress(raw cty.Value, get func(string) interface{}) error {
 			}
 		}
 	}
+	// The format validators are plan-time ValidateFuncs and are skipped for
+	// unknown references; repeat them here on the RESOLVED values so a
+	// malformed address fails before any mutation, not halfway through one.
+	for _, f := range []struct {
+		name string
+		fn   func(interface{}, string) ([]string, []error)
+	}{{"ip", validateIP}, {"dns", validateDNS}, {"port", validatePort}} {
+		if _, errs := f.fn(get(f.name), f.name); len(errs) > 0 {
+			return errs[0]
+		}
+	}
 	ip, _ := get("ip").(string)
 	dns, _ := get("dns").(string)
 	useIP, _ := get("use_ip").(bool)

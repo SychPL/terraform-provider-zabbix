@@ -297,6 +297,9 @@ func validateActionValues(d *schema.ResourceData) error {
 	if et := d.Get("evaltype").(int); et < 0 || et > 2 {
 		return fmt.Errorf("evaltype %d is not supported (0 - and/or, 1 - and, 2 - or)", et)
 	}
+	if _, errs := validateEscPeriod(d.Get("esc_period"), "esc_period"); len(errs) > 0 {
+		return errs[0]
+	}
 	for _, raw := range d.Get("condition").(*schema.Set).List() {
 		c := raw.(map[string]interface{})
 		ct := c["conditiontype"].(int)
@@ -341,7 +344,13 @@ func validateActionValues(d *schema.ResourceData) error {
 		if op["default_msg"].(bool) && (op["subject"].(string) != "" || op["message"].(string) != "") {
 			return fmt.Errorf("operation.%d: subject/message require default_msg = false", i)
 		}
+		if _, errs := validateOperationEscPeriod(op["esc_period"], fmt.Sprintf("operation.%d.esc_period", i)); len(errs) > 0 {
+			return errs[0]
+		}
 		from, to := op["esc_step_from"].(int), op["esc_step_to"].(int)
+		if from < 1 {
+			return fmt.Errorf("operation.%d: esc_step_from must be >= 1, got %d", i, from)
+		}
 		if to != 0 && to < from {
 			return fmt.Errorf("operation.%d: esc_step_to (%d) must be 0 or >= esc_step_from (%d)", i, to, from)
 		}

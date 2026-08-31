@@ -101,6 +101,10 @@ Terraform state. Use an encrypted, access-controlled state backend.
 - Every CRUD operation defaults to a 2-minute timeout; raise it per resource
   with a `timeouts` block (e.g. `timeouts { create = "15m" }`) when an apply
   links large templates.
+- The action condition matrix is the 6.4 baseline: operators added in newer
+  lines (e.g. tag "matches"/"does not match", 8/9 in 7.0) are not modelled -
+  an action using them is refused at Read (refuse-not-guess) and must be
+  managed outside Terraform or without those operators.
 - Standard Go proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) are
   honoured: API traffic - including credentials and tokens - then flows
   through the configured proxy. Unset them (or use `NO_PROXY`) when the
