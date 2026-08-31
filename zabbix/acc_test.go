@@ -1,16 +1,21 @@
 package zabbix
 
 import (
+	"bytes"
 	"context"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
@@ -786,15 +791,47 @@ func TestAccProvider_SessionRelogin(t *testing.T) {
 	if err := c.Login(ctx); err != nil {
 		t.Fatal(err)
 	}
+
+	// Count real user.login requests on the transport: the single-flight
+	// property must hold against the live API, not only against mocks.
+	var logins atomic.Int32
+	base := c.httpClient.Transport
+	c.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		if strings.Contains(string(body), `"user.login"`) {
+			logins.Add(1)
+		}
+		return base.RoundTrip(req)
+	})
+
+	// Invalidate the live session behind the client's back.
 	if err := c.Call(ctx, "user.logout", []interface{}{}, nil); err != nil {
 		t.Fatalf("user.logout: %v", err)
 	}
-	if _, err := c.GetHostGroup(ctx, "1"); err != nil && !errors.Is(err, ErrNotFound) {
-		t.Fatalf("re-login after an invalidated session failed: %v", err)
+
+	const parallel = 5
+	var wg sync.WaitGroup
+	errs := make(chan error, parallel)
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := c.GetHostGroup(ctx, "1")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			t.Fatalf("re-login after an invalidated session failed: %v", err)
+		}
+	}
+	if got := logins.Load(); got != 1 {
+		t.Fatalf("parallel calls after session invalidation must share exactly one re-login, got %d", got)
 	}
 }
-
-// --- provider: API token authentication ---
 
 func TestAccProvider_APIToken(t *testing.T) {
 	testAccPreCheck(t)

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 // fixtureServer answers every *.get call with the given JSON result.
@@ -283,13 +284,33 @@ func TestActionRead_RefusesOperationConditions(t *testing.T) {
 func TestMediaTypeRead_RefusesRestrictedResponse(t *testing.T) {
 	// Since 6.4.19 non-Super-Admin roles get only mediatypeid, name, type,
 	// status and maxattempts; adopting that would zero out the real
-	// configuration, so the read must fail and keep the state untouched.
+	// configuration. The read must fail and leave EVERY existing attribute
+	// untouched - including the stored credentials.
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","name":"m","type":"0","status":"0","maxattempts":"3"}]`)
-	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
-	d.SetId("9")
-	diags := resourceMediaType().ReadContext(context.Background(), d, c)
+	old := map[string]string{
+		"name": "mail", "type": "0", "enabled": "true",
+		"smtp_server": "keep.mail", "smtp_port": "587", "smtp_helo": "h", "smtp_email": "e@x",
+		"smtp_security": "0", "smtp_verify_peer": "false", "smtp_verify_host": "false",
+		"smtp_authentication": "1", "username": "u", "password": "keep-me",
+		"exec_path": "", "gsm_modem": "", "script": "", "timeout": "30s",
+		"description": "", "max_sessions": "1", "max_attempts": "3", "attempt_interval": "10s",
+		"content_type": "1", "process_tags": "false", "show_event_menu": "false",
+		"event_menu_url": "", "event_menu_name": "", "parameter.#": "0",
+	}
+	r := resourceMediaType()
+	d := r.Data(&terraform.InstanceState{ID: "9", Attributes: old})
+	diags := r.ReadContext(context.Background(), d, c)
 	if !diags.HasError() || !strings.Contains(diags[0].Summary, "Super Admin") || d.Id() != "9" {
 		t.Fatalf("a restricted mediatype.get response must be refused and keep the ID, got %v id=%q", diags, d.Id())
+	}
+	st := d.State()
+	if st == nil {
+		t.Fatal("the state must survive a refused read, got nil")
+	}
+	for k, v := range old {
+		if got := st.Attributes[k]; got != v {
+			t.Fatalf("attribute %s must keep %q after a refused read, got %q", k, v, got)
+		}
 	}
 }
 
@@ -622,33 +643,62 @@ func TestExpandHost_NameFollowsResolvedHost(t *testing.T) {
 }
 
 func TestPartialStateOnFailedUpdates(t *testing.T) {
-	// d.Partial(true) must protect every resource: a failed mutation must not
-	// persist the planned values (here: the planned name).
+	// The production path: Resource.Diff over (previous state, planned config)
+	// followed by Resource.Apply. After a failed mutation the returned state
+	// must still carry the complete PREVIOUS values - not merely lack the
+	// planned ones, and never be empty (that would plan a recreate).
 	boom := &JsonRpcError{Code: -32500, Message: "Application error.", Data: "boom"}
 	actionBase := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
-	emailFixture := `[{"mediatypeid":"45","type":"0","name":"mail","status":"0",
-		"smtp_server":"mail.x","smtp_port":"587","smtp_helo":"x","smtp_email":"a@x","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
-		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"","timeout":"30s","content_type":"1","parameters":[]}]`
+	emailFixture := `[{"mediatypeid":"45","type":"0","name":"old-name","status":"0",
+		"smtp_server":"old.mail","smtp_port":"587","smtp_helo":"h","smtp_email":"e@x","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+		"smtp_authentication":"1","username":"u","passwd":"old-secret","exec_path":"","gsm_modem":"","script":"","timeout":"30s","content_type":"1","parameters":[]}]`
 
 	cases := []struct {
 		name     string
 		resource *schema.Resource
-		raw      map[string]interface{}
-		id       string
+		old      map[string]string
+		planned  map[string]interface{}
 		handler  func(req rpcRequest) (interface{}, *JsonRpcError)
 	}{
-		{"host group", resourceHostGroup(), map[string]interface{}{"name": "planned"}, "42",
+		{"host group", resourceHostGroup(),
+			map[string]string{"name": "old-name"},
+			map[string]interface{}{"name": "planned"},
 			func(req rpcRequest) (interface{}, *JsonRpcError) { return nil, boom }},
-		{"action", resourceAction(), map[string]interface{}{"name": "planned",
-			"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}}, "10",
+		{"action", resourceAction(),
+			map[string]string{
+				"name": "old-name", "eventsource": "0", "enabled": "true", "esc_period": "1h", "evaltype": "0",
+				"pause_suppressed": "true", "pause_symptoms": "true", "notify_if_canceled": "true",
+				"condition.#": "0",
+				"operation.#": "1", "operation.0.operationtype": "0", "operation.0.esc_period": "0",
+				"operation.0.esc_step_from": "1", "operation.0.esc_step_to": "1",
+				"operation.0.mediatypeid": "0", "operation.0.default_msg": "true",
+				"operation.0.subject": "", "operation.0.message": "",
+				"operation.0.user_groups.#": "0",
+				// 915405929 is the SDK set hash of the string element "1".
+				"operation.0.users.#": "1", "operation.0.users.915405929": "1",
+			},
+			map[string]interface{}{"name": "planned",
+				"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}},
 			func(req rpcRequest) (interface{}, *JsonRpcError) {
 				if req.Method == "action.get" {
 					return json.RawMessage(actionBase), nil
 				}
 				return nil, boom
 			}},
-		{"media type", resourceMediaType(), map[string]interface{}{"name": "planned", "type": 0,
-			"smtp_server": "mail.x", "smtp_helo": "x", "smtp_email": "a@x"}, "45",
+		{"media type", resourceMediaType(),
+			map[string]string{
+				"name": "old-name", "type": "0", "enabled": "true",
+				"smtp_server": "old.mail", "smtp_port": "587", "smtp_helo": "h", "smtp_email": "e@x",
+				"smtp_security": "0", "smtp_verify_peer": "false", "smtp_verify_host": "false",
+				"smtp_authentication": "1", "username": "u", "password": "old-secret",
+				"exec_path": "", "gsm_modem": "", "script": "", "timeout": "30s",
+				"description": "", "max_sessions": "1", "max_attempts": "3", "attempt_interval": "10s",
+				"content_type": "1", "process_tags": "false", "show_event_menu": "false",
+				"event_menu_url": "", "event_menu_name": "", "parameter.#": "0",
+			},
+			map[string]interface{}{"name": "planned", "type": 0,
+				"smtp_server": "old.mail", "smtp_port": 587, "smtp_helo": "h", "smtp_email": "e@x",
+				"smtp_authentication": 1, "username": "u", "password": "old-secret", "content_type": 1},
 			func(req rpcRequest) (interface{}, *JsonRpcError) {
 				if req.Method == "mediatype.get" {
 					return json.RawMessage(emailFixture), nil
@@ -660,14 +710,25 @@ func TestPartialStateOnFailedUpdates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newRPCServer(t, tc.handler)
 			c := newTestClient(t, s, ClientConfig{APIToken: "t"})
-			d := schema.TestResourceDataRaw(t, tc.resource.Schema, tc.raw)
-			d.SetId(tc.id)
-			diags := tc.resource.UpdateContext(context.Background(), d, c)
+			state := &terraform.InstanceState{ID: "45", Attributes: tc.old}
+			diff, err := tc.resource.Diff(context.Background(), state, terraform.NewResourceConfigRaw(tc.planned), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff == nil {
+				t.Fatal("expected a non-empty diff")
+			}
+			newState, diags := tc.resource.Apply(context.Background(), state, diff, c)
 			if !diags.HasError() {
 				t.Fatalf("the failing update must surface an error, got %v", diags)
 			}
-			if st := d.State(); st != nil && st.Attributes["name"] == "planned" {
-				t.Fatalf("planned values must not be written to state after a failed update, got %+v", st.Attributes)
+			if newState == nil {
+				t.Fatal("the state must survive a failed update, got nil")
+			}
+			for k, v := range tc.old {
+				if got := newState.Attributes[k]; got != v {
+					t.Fatalf("attribute %s must keep its previous value %q, got %q (attrs: %v)", k, v, got, newState.Attributes)
+				}
 			}
 		})
 	}
