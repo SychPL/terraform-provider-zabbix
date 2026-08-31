@@ -364,6 +364,11 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 // timeout/event menu and SMS max_sessions.
 func validateMediaTypeValues(d *schema.ResourceData) error {
 	t := d.Get("type").(int)
+	if _, ok := mediaTypeFields[t]; !ok {
+		// The schema validates this, but an unknown reference can resolve to
+		// anything at apply time; creating it would strand the object.
+		return fmt.Errorf("type %d is not supported (0 - email, 1 - script, 2 - SMS, 4 - webhook)", t)
+	}
 	if err := foreignMediaTypeFields(d.GetRawConfig(), t); err != nil {
 		return err
 	}

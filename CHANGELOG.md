@@ -100,6 +100,10 @@
 - A missing `url` reports "url must be configured" instead of a misleading
   format error; `dns` length is counted in characters, not bytes; the
   standard Go proxy environment is documented in the README.
+- A resolved `operationtype` other than "send message" fails before the
+  create instead of stranding a freshly created action as unmanageable;
+  the same applies to resolved `evaltype`, `conditiontype` and media type
+  `type` values.
 - Import examples use environment-variable placeholders instead of hardcoded
   object IDs that could match real production objects.
 

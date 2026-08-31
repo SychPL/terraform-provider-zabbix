@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
@@ -712,7 +713,18 @@ func TestAccProvider_TLSTerminatedProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := httptest.NewUnstartedServer(httputil.NewSingleHostReverseProxy(backend))
+	// The reverse-proxy target must carry no path: SingleHostReverseProxy
+	// joins the target path with the request path, which would silently turn
+	// /api_jsonrpc.php into /api_jsonrpc.php/api_jsonrpc.php.
+	target := *backend
+	target.Path, target.RawPath = "", ""
+	rp := httputil.NewSingleHostReverseProxy(&target)
+	proxy := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != backend.Path {
+			t.Errorf("proxy received path %q, want %q", r.URL.Path, backend.Path)
+		}
+		rp.ServeHTTP(w, r)
+	}))
 	proxy.StartTLS()
 	t.Cleanup(proxy.Close)
 

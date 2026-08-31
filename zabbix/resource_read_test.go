@@ -508,6 +508,27 @@ func TestActionApplyValidation_RejectsResolvedConflicts(t *testing.T) {
 	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawES), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "eventsource 1 is not supported") {
 		t.Fatalf("a resolved non-trigger eventsource must fail before create, got %v", diags)
 	}
+
+	// An operationtype that resolved to something other than "send message":
+	// creating it would immediately strand the action as unmanageable.
+	rawOT := map[string]interface{}{"name": "a",
+		"operation": []interface{}{map[string]interface{}{"operationtype": 1, "users": []interface{}{"1"}}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawOT), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "operationtype 1 is not supported") {
+		t.Fatalf("a resolved unsupported operationtype must fail before create, got %v", diags)
+	}
+
+	// The remaining enums, resolved to unsupported variants at apply time.
+	rawET := map[string]interface{}{"name": "a", "evaltype": 3,
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawET), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "evaltype 3 is not supported") {
+		t.Fatalf("a resolved custom evaltype must fail before create, got %v", diags)
+	}
+	rawCT := map[string]interface{}{"name": "a",
+		"operation": []interface{}{map[string]interface{}{"users": []interface{}{"1"}}},
+		"condition": []interface{}{map[string]interface{}{"conditiontype": 5, "value": "x"}}}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, rawCT), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "conditiontype 5 is not supported") {
+		t.Fatalf("a resolved unsupported conditiontype must fail before create, got %v", diags)
+	}
 }
 
 func TestActionUpdate_RefusesExternalUnmanagedShapes(t *testing.T) {
@@ -560,6 +581,17 @@ func TestMediaTypeApplyValidation_RejectsResolvedConflicts(t *testing.T) {
 	raw2 := map[string]interface{}{"name": "m", "type": 4, "script": "x", "event_menu_url": "https://x"}
 	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, raw2), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "requires show_event_menu") {
 		t.Fatalf("event_menu_url with show_event_menu resolved to false must fail, got %v", diags)
+	}
+
+	// A type that resolved to an unsupported transport at apply time.
+	raw3 := map[string]interface{}{"name": "m", "type": 3, "script": "x"}
+	if diags := r.CreateContext(context.Background(), schema.TestResourceDataRaw(t, r.Schema, raw3), c); !diags.HasError() || !strings.Contains(diags[0].Summary, "type 3 is not supported") {
+		t.Fatalf("a resolved unsupported type must fail before create, got %v", diags)
+	}
+	d3 := schema.TestResourceDataRaw(t, r.Schema, raw3)
+	d3.SetId("9")
+	if diags := r.UpdateContext(context.Background(), d3, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "type 3 is not supported") {
+		t.Fatalf("the same resolved type must fail before update, got %v", diags)
 	}
 }
 

@@ -15,11 +15,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
-// SupportedVersionPrefix is the primary Zabbix API version line the provider
-// targets; SupportedVersionPrefixes lists every line the CI acceptance matrix
-// exercises.
-const SupportedVersionPrefix = "6.4"
-
+// SupportedVersionPrefixes lists the Zabbix release lines the CI acceptance
+// matrix exercises; versionDiagnostics warns for anything else. Single source
+// of truth - no per-line constant to drift away from it.
 var SupportedVersionPrefixes = []string{"6.4", "7.0"}
 
 // configureTimeout bounds the version check and authentication performed

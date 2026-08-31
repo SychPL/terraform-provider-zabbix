@@ -287,15 +287,20 @@ func validateActionValues(d *schema.ResourceData) error {
 		// an unsupported action shape to the API.
 		return fmt.Errorf("eventsource %d is not supported (only 0, trigger actions)", es)
 	}
+	if et := d.Get("evaltype").(int); et < 0 || et > 2 {
+		return fmt.Errorf("evaltype %d is not supported (0 - and/or, 1 - and, 2 - or)", et)
+	}
 	for _, raw := range d.Get("condition").(*schema.Set).List() {
 		c := raw.(map[string]interface{})
 		ct := c["conditiontype"].(int)
 		v := c["value"].(string)
 		v2 := c["value2"].(string)
-		if op, ok := c["operator"].(int); ok {
-			if allowed, known := conditionOperators[ct]; known && !intIn(op, allowed) {
-				return fmt.Errorf("operator %d is not valid for condition type %d (allowed: %v)", op, ct, allowed)
-			}
+		allowed, known := conditionOperators[ct]
+		if !known {
+			return fmt.Errorf("conditiontype %d is not supported", ct)
+		}
+		if op, ok := c["operator"].(int); ok && !intIn(op, allowed) {
+			return fmt.Errorf("operator %d is not valid for condition type %d (allowed: %v)", op, ct, allowed)
 		}
 		if strings.TrimSpace(v) == "" {
 			return fmt.Errorf("condition value must not be empty or whitespace")
@@ -317,6 +322,12 @@ func validateActionValues(d *schema.ResourceData) error {
 	}
 	for i, raw := range d.Get("operation").([]interface{}) {
 		op := raw.(map[string]interface{})
+		if ot, ok := op["operationtype"].(int); ok && ot != 0 {
+			// Same rationale as eventsource: an unknown reference may resolve
+			// to a type the provider cannot round-trip - creating it would
+			// immediately strand the resource as unmanageable.
+			return fmt.Errorf("operation.%d: operationtype %d is not supported (only 0, send message)", i, ot)
+		}
 		if len(setStrings(op["user_groups"]))+len(setStrings(op["users"])) == 0 {
 			return fmt.Errorf("operation.%d: at least one recipient in user_groups or users is required", i)
 		}

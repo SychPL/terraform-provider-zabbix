@@ -533,6 +533,30 @@ func TestCall_OversizedResponseFails(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRawCall_TransportSeesNoGetBody(t *testing.T) {
+	// Not only the helper: the request that actually reaches the transport
+	// from rawCall must be non-replayable (a refactor building requests
+	// outside newSingleShotRequest would be caught here).
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		return []HostGroup{{GroupID: "1", Name: "g"}}, nil
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	base := c.httpClient.Transport
+	c.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.GetBody != nil {
+			t.Error("rawCall must hand the transport a request with GetBody == nil")
+		}
+		return base.RoundTrip(req)
+	})
+	if _, err := c.GetHostGroup(context.Background(), "1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRawCall_RequestsAreNotReplayable(t *testing.T) {
 	// The exact request constructor used by rawCall must produce requests that
 	// net/http can never transparently replay.
