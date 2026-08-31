@@ -122,7 +122,7 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Type:        schema.TypeString,
 			Optional:    true,
 			Default:     "",
-			Description: "SMTP HELO. Required for type 0 (Email).",
+			Description: "SMTP HELO (Email). Optional: when empty, Zabbix derives HELO from the sender domain.",
 		},
 		"smtp_email": {
 			Type:        schema.TypeString,
@@ -141,13 +141,13 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Type:        schema.TypeBool,
 			Optional:    true,
 			Default:     false,
-			Description: "Verify the SMTP server certificate (Email).",
+			Description: "Verify the SMTP server certificate (Email). Requires `smtp_security` 1 or 2 - the API rejects it with security 0.",
 		},
 		"smtp_verify_host": {
 			Type:        schema.TypeBool,
 			Optional:    true,
 			Default:     false,
-			Description: "Verify the SMTP server host name in the certificate (Email).",
+			Description: "Verify the SMTP server host name in the certificate (Email). Requires `smtp_security` 1 or 2 - the API rejects it with security 0.",
 		},
 		"smtp_authentication": {
 			Type:         schema.TypeInt,
@@ -312,9 +312,19 @@ func resourceMediaTypeCustomizeDiff(_ context.Context, d *schema.ResourceDiff, _
 	}
 	switch t {
 	case mediaTypeEmail:
-		for _, f := range []string{"smtp_server", "smtp_helo", "smtp_email"} {
+		// smtp_helo is NOT required: an empty value is accepted by the API
+		// and Zabbix derives HELO from the sender domain (verified on
+		// 6.4.21 and 7.0.30).
+		for _, f := range []string{"smtp_server", "smtp_email"} {
 			if err := require(f); err != nil {
 				return err
+			}
+		}
+		if known("smtp_security") && d.Get("smtp_security").(int) == 0 {
+			for _, f := range []string{"smtp_verify_peer", "smtp_verify_host"} {
+				if known(f) && d.Get(f).(bool) {
+					return fmt.Errorf("%s requires smtp_security 1 (STARTTLS) or 2 (SSL/TLS); the API rejects it with security 0", f)
+				}
 			}
 		}
 		switch {
@@ -410,9 +420,16 @@ func validateMediaTypeValues(d *schema.ResourceData) error {
 	}
 	switch t {
 	case mediaTypeEmail:
-		for _, f := range []string{"smtp_server", "smtp_helo", "smtp_email"} {
+		for _, f := range []string{"smtp_server", "smtp_email"} {
 			if err := require(f); err != nil {
 				return err
+			}
+		}
+		if d.Get("smtp_security").(int) == 0 {
+			for _, f := range []string{"smtp_verify_peer", "smtp_verify_host"} {
+				if d.Get(f).(bool) {
+					return fmt.Errorf("%s requires smtp_security 1 (STARTTLS) or 2 (SSL/TLS); the API rejects it with security 0", f)
+				}
 			}
 		}
 		if d.Get("smtp_authentication").(int) == 0 {

@@ -149,6 +149,7 @@ Zachowanie standardowe dla providerow Terraform; opisane w README i `ErrNotFound
 | M12 | P1 | Zmiana typu na Script wysyla `parameters: []` (inaczej parametry webhooka zostawaly i Read odmawial zarzadzania) | `TestMediaTypeParams_ScriptParametersUntouched`, kroki webhook->script w `TestAccMediaType_scriptSmsTypeChange` | DONE |
 | M11 | P3 | Read: najpierw walidacja `type` (nieobslugiwany = odmowa z hintem), potem parsowanie WYLACZNIE pol wlasciwych dla typu; puste wartosci pol obcych tolerowane (obiekty spoza providera), nieparsowalne pole wlasnego typu = odmowa z hintem `terraform state rm` | `TestMediaTypeRead_RefusesUnsupportedType`, `TestMediaTypeRead_ForeignNumericFieldsAreTolerated`, `TestMediaTypeRead_OwnNonNumericFieldRefusedWithHint` | DONE |
 | M16 | P3 | Sonda restricted-response odporna na hipotetyczne pominiecie pol obcych typowi (dowolne z `smtp_server`/`description`/`maxsessions` = pelna odpowiedz); `max_sessions = 0` przechodzi przez realne API (GLM r17) | `TestMediaTypeRead_RefusesRestrictedResponse`, krok webhook w `TestAccMediaType_webhook` | DONE |
+| M24 | P2 | Reguly Email zgodne z empiria (runda finalowa): `smtp_helo` NIE jest wymagane (pusty akceptowany na 6.4/7.0), a `smtp_verify_peer/host` wymagaja `smtp_security` 1/2 - walidowane w planie i na wartosciach rozwiazanych, zamiast bledu API w apply | przypadki helo/verify w `TestMediaTypeCustomizeDiff` | DONE |
 | M23 | P2 | Sonda restricted-read nie uznaje `description` za dowod pelnej odpowiedzi - Zabbix 7.0 zwraca description takze w odpowiedzi ograniczonej, wiec Script/SMS przechodzilyby z pustym exec_path/gsm_modem i falszywym driftem zamiast jasnej odmowy (Codex r39, realny trigger: 7.0 + rola nizsza niz Super Admin) | wariant 7.0 w `TestMediaTypeRead_RefusesRestrictedResponse` | DONE |
 | M22 | P2 | Wymagane bity binarne media typu musza byc OBECNE: puste `status`/flagi wlasnego typu = odmowa (pusty status zapisalby aktywny media type jako wylaczony i ukryl drift) (Codex r38) | przypadki "missing" w `TestMediaTypeRead_RefusesOutOfRangeValues` | DONE |
 | M21 | P2 | Binarne pola media typu (`status`, `smtp_verify_peer/host`, `process_tags`, `show_event_menu`) walidowane w `mediaTypeInts` na dokladnie {0,1} (puste = default; obiekty spoza providera) - Read i preflight odmawiaja tak samo (Codex r37) | przypadki binarne w `TestMediaTypeRead_RefusesOutOfRangeValues` | DONE |
@@ -269,6 +270,11 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   provider odrzuca 6.4.0 w configure z jasna diagnostyka (Codex, r12).
 - ZBX-22952: proxy/webserver gubiacy naglowek `Authorization` daje "Not authorized" przy CRUD
   mimo poprawnego configure (provider uzywa wylacznie Bearer) - udokumentowane w README.
+
+- Pusty `smtp_helo` jest AKCEPTOWANY przez `mediatype.create` na 6.4.21 i 7.0.30
+  (Zabbix wyprowadza HELO z domeny nadawcy), a `smtp_verify_peer=1` przy
+  `smtp_security=0` jest ODRZUCANY na obu liniach ("value must be 0") -
+  zbadane 2026-08-31 sondami API na lokalnych stackach.
 
 ## 4a. Uwagi recenzentow odrzucone (z uzasadnieniem)
 

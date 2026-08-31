@@ -37,6 +37,10 @@
   set): a Script/SMS read under a non-Super-Admin role refuses clearly
   instead of faking drift. Release tags `v*` are protected by a repository
   ruleset; the acceptance token cleanup surfaces failures.
+- Email rules now match the verified API behaviour on 6.4 and 7.0:
+  `smtp_helo` is no longer required (Zabbix derives HELO from the sender
+  domain), and `smtp_verify_peer`/`smtp_verify_host` fail the plan when
+  `smtp_security` is 0 (the API rejects that combination in apply).
 - A transport failure during the read confirming an "object missing" delete
   surfaces both causes; `localhost` is recognised case-insensitively; the
   acceptance helper client honours `ZABBIX_TLS_INSECURE`/`ZABBIX_CA_CERT_FILE`.
