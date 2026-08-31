@@ -47,8 +47,9 @@ jobs:
           fi
       - name: No stale registry namespace
         run: |
-          if git grep -n "Tensai123/zabbix" -- ':!.reviews'; then
-            echo "::error::stale Tensai123/zabbix references - the provider publishes as SychPL/zabbix"; exit 1
+          # The [/] class keeps this step from matching its own source line.
+          if git grep -n "Tensai123[/]zabbix" -- ':!.reviews'; then
+            echo "::error::stale registry namespace references - the provider publishes as SychPL/zabbix"; exit 1
           fi
       - name: go mod tidy check
         run: go mod tidy && git diff --exit-code go.mod go.sum
