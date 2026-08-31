@@ -627,6 +627,11 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	case mediaTypeSMS:
 		values["gsm_modem"] = mt.GSMModem
 	case mediaTypeWebhook:
+		if secs, err := parseZabbixDuration(mt.Timeout); err != nil || secs < 1 || secs > 60 {
+			// d.Set bypasses schema validators; adopting an out-of-range value
+			// would poison the state, so the read is fail-closed instead.
+			return diag.Errorf("media type %s has webhook timeout %q outside the supported 1-60s range; %s", d.Id(), mt.Timeout, unmanageableHint)
+		}
 		values["script"] = mt.Script
 		values["timeout"] = mt.Timeout
 		values["process_tags"] = mt.ProcessTags == "1"

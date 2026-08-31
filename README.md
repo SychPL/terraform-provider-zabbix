@@ -1,6 +1,6 @@
 # Terraform Provider for Zabbix
 
-[![CI](https://github.com/Tensai123/terraform-provider-zabbix/actions/workflows/ci.yml/badge.svg)](https://github.com/Tensai123/terraform-provider-zabbix/actions/workflows/ci.yml)
+[![CI](https://github.com/SychPL/terraform-provider-zabbix/actions/workflows/ci.yml/badge.svg)](https://github.com/SychPL/terraform-provider-zabbix/actions/workflows/ci.yml)
 
 A Terraform provider for managing Zabbix objects through the JSON-RPC API.
 Tested against **Zabbix 6.4 and 7.0 LTS** (acceptance matrix in CI, see
@@ -105,9 +105,14 @@ Terraform state. Use an encrypted, access-controlled state backend.
   honoured: API traffic - including credentials and tokens - then flows
   through the configured proxy. Unset them (or use `NO_PROXY`) when the
   Zabbix API must be reached directly.
-- The provider authenticates every request with an `Authorization: Bearer`
-  header only. If configure succeeds but mutations fail with "Not authorized",
-  a proxy in front of Zabbix is probably stripping the header (compare
+- The provider authenticates requests with an `Authorization: Bearer` header.
+  Two bootstrap calls are the exception and carry a secret in the JSON-RPC
+  body instead: `user.login` (the password) and `user.checkAuthentication`
+  (the API token - the API requires that call without an Authorization
+  header). A proxy that logs request bodies sees those secrets even when it
+  redacts headers: use HTTPS end to end and redact bodies too. If configure
+  succeeds but mutations fail with "Not authorized", a proxy is probably
+  stripping the header (compare
   [ZBX-22952](https://support.zabbix.com/browse/ZBX-22952)).
 - Deletes are idempotent: an object already removed in Zabbix does not fail
   `terraform destroy`.

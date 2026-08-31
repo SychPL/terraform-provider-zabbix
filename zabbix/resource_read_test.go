@@ -314,6 +314,20 @@ func TestMediaTypeRead_RefusesRestrictedResponse(t *testing.T) {
 	}
 }
 
+func TestMediaTypeRead_RefusesOutOfRangeWebhookTimeout(t *testing.T) {
+	// d.Set bypasses schema validators: adopting an out-of-range timeout from
+	// the API would poison the state, so the read must be fail-closed.
+	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"4","name":"wh","status":"0",
+		"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
+		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"5m","parameters":[]}]`)
+	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+	d.SetId("9")
+	diags := resourceMediaType().ReadContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "1-60s") || !strings.Contains(diags[0].Summary, "terraform state rm") || d.Id() != "9" {
+		t.Fatalf("an out-of-range webhook timeout must be refused with the ID kept, got %v id=%q", diags, d.Id())
+	}
+}
+
 func TestMediaTypeRead_RefusesUnsupportedType(t *testing.T) {
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"3","name":"jabber","status":"0",
 		"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
@@ -1004,7 +1018,10 @@ func TestMediaTypeResource_EmailUpdatePayload(t *testing.T) {
 	if diags := r.UpdateContext(context.Background(), d, c); diags.HasError() {
 		t.Fatal(diags)
 	}
-	want := map[string]interface{}{"mediatypeid": "45", "smtp_port": "2525", "passwd": "pw2", "content_type": "0", "script": ""}
+	want := map[string]interface{}{"mediatypeid": "45", "smtp_port": "2525", "passwd": "pw2", "content_type": "0", "script": "",
+		"smtp_server": "mail.x", "smtp_helo": "x", "smtp_email": "a@x",
+		"smtp_security": "1", "smtp_verify_peer": "0", "smtp_verify_host": "0",
+		"smtp_authentication": "1", "username": "u"}
 	for k, v := range want {
 		if updated[k] != v {
 			t.Errorf("update payload %s: want %v, got %v", k, v, updated[k])

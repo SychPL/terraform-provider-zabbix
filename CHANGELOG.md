@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A webhook `timeout` outside 1-60s coming back from the API is refused at
+  Read (fail-closed) instead of poisoning the state.
+- The README documents the two bootstrap calls that carry a secret in the
+  request body (`user.login`, `user.checkAuthentication`) and the CI badge
+  points at the publishing repository.
+
 ## v0.2.1 (2026-08-31)
 
 ### Fixed

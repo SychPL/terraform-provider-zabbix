@@ -404,6 +404,9 @@ func TestCall_ReloginSurvivesInitiatorCancellation(t *testing.T) {
 	if _, err := c.GetHostGroup(context.Background(), "1"); err != nil {
 		t.Fatalf("the login must complete for other callers even if its initiator was cancelled: %v", err)
 	}
+	if got := logins.Load(); got != 2 {
+		t.Fatalf("want exactly the initial login plus one shared re-login (2), got %d", got)
+	}
 }
 
 func TestCall_LazyFirstLoginIsSingleFlight(t *testing.T) {

@@ -518,6 +518,9 @@ resource "zabbix_media_type" "mail" {
 			{Config: cfg(2525, "hunter3"), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_port", "2525"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "password", "hunter3"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_verify_peer", "true"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_security", "1"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_authentication", "1"),
 			)},
 			// Switching away from email must clear the SMTP credentials in
 			// Zabbix itself, not only in the Terraform state.
