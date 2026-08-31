@@ -320,7 +320,7 @@ func TestMediaTypeRead_RefusesOutOfRangeWebhookTimeout(t *testing.T) {
 	// the API would poison the state, so the read must be fail-closed.
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"4","name":"wh","status":"0",
 		"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
-		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"5m","parameters":[]}]`)
+		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"5m","process_tags":"0","show_event_menu":"0","parameters":[]}]`)
 	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
 	d.SetId("9")
 	diags := resourceMediaType().ReadContext(context.Background(), d, c)
@@ -346,7 +346,7 @@ func TestMediaTypeRead_ForeignNumericFieldsAreTolerated(t *testing.T) {
 	// the provider) must read fine: smtp_port belongs to the email type only.
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","type":"4","name":"wh","status":"0",
 		"smtp_server":"","smtp_port":"twenty-five","smtp_helo":"","smtp_email":"","smtp_security":"","smtp_verify_peer":"0","smtp_verify_host":"0",
-		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"30s","parameters":[]}]`)
+		"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"30s","process_tags":"0","show_event_menu":"0","parameters":[]}]`)
 	d := readInto(t, resourceMediaType(), c, "9")
 	if d.Get("smtp_port") != 25 || d.Get("script") != "return 1;" {
 		t.Fatalf("foreign numeric fields must fall back to defaults, got smtp_port=%v", d.Get("smtp_port"))
@@ -1088,8 +1088,10 @@ func TestMediaTypeRead_RefusesOutOfRangeValues(t *testing.T) {
 	// Non-binary flag values must be refused too, not normalised to false.
 	okFix := ok.Replace(base)
 	for name, fixture := range map[string]string{
-		"status 2":           strings.Replace(okFix, `"status":"0"`, `"status":"2"`, 1),
-		"smtp_verify_peer 2": strings.Replace(okFix, `"smtp_verify_peer":"0"`, `"smtp_verify_peer":"2"`, 1),
+		"status 2":                 strings.Replace(okFix, `"status":"0"`, `"status":"2"`, 1),
+		"smtp_verify_peer 2":       strings.Replace(okFix, `"smtp_verify_peer":"0"`, `"smtp_verify_peer":"2"`, 1),
+		"status missing":           strings.Replace(okFix, `"status":"0"`, `"status":""`, 1),
+		"smtp_verify_peer missing": strings.Replace(okFix, `"smtp_verify_peer":"0"`, `"smtp_verify_peer":""`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := fixtureServer(t, "mediatype.get", fixture)
@@ -1117,13 +1119,15 @@ func TestActionRead_RefusesOutOfModelValues(t *testing.T) {
 	// update would write them back (or silently normalise them).
 	okAction := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
 	for name, tc := range map[string]struct{ fixture, want string }{
-		"evaltype 5":       {strings.Replace(okAction, `"evaltype":"2"`, `"evaltype":"5"`, 1), "evaltype 5"},
-		"default_msg 2":    {strings.Replace(okAction, `"default_msg":"1"`, `"default_msg":"2"`, 1), "default_msg"},
-		"esc_step_from 0":  {strings.Replace(okAction, `"esc_step_from":"1"`, `"esc_step_from":"0"`, 1), "escalation steps"},
-		"severity 9":       {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"4","operator":"5","value":"9","value2":"","formulaid":"A"}`, 1), "outside 0-5"},
-		"value2 on type 0": {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"0","operator":"0","value":"25","value2":"x","formulaid":"A"}`, 1), "value2"},
-		"status 2":         {strings.Replace(okAction, `"status":"0"`, `"status":"2"`, 1), "outside the supported 0/1"},
-		"pause_symptoms 5": {strings.Replace(okAction, `"pause_symptoms":"0"`, `"pause_symptoms":"5"`, 1), "outside the supported 0/1"},
+		"evaltype 5":               {strings.Replace(okAction, `"evaltype":"2"`, `"evaltype":"5"`, 1), "evaltype 5"},
+		"default_msg 2":            {strings.Replace(okAction, `"default_msg":"1"`, `"default_msg":"2"`, 1), "default_msg"},
+		"esc_step_from 0":          {strings.Replace(okAction, `"esc_step_from":"1"`, `"esc_step_from":"0"`, 1), "escalation steps"},
+		"severity 9":               {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"4","operator":"5","value":"9","value2":"","formulaid":"A"}`, 1), "outside 0-5"},
+		"value2 on type 0":         {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"0","operator":"0","value":"25","value2":"x","formulaid":"A"}`, 1), "value2"},
+		"status 2":                 {strings.Replace(okAction, `"status":"0"`, `"status":"2"`, 1), "outside the supported 0/1"},
+		"status missing":           {strings.Replace(okAction, `"status":"0"`, `"status":""`, 1), "outside the supported 0/1"},
+		"pause_suppressed missing": {strings.Replace(okAction, `"pause_suppressed":"1"`, `"pause_suppressed":""`, 1), "outside the supported 0/1"},
+		"pause_symptoms 5":         {strings.Replace(okAction, `"pause_symptoms":"0"`, `"pause_symptoms":"5"`, 1), "outside the supported 0/1"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := fixtureServer(t, "action.get", tc.fixture)
@@ -1205,7 +1209,7 @@ func TestMediaTypeUpdate_ClearsParametersOnExternalTypeDrift(t *testing.T) {
 				return json.RawMessage(`[{"mediatypeid":"9","type":"4","name":"wh","status":"0",
 					"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
 					"smtp_authentication":"0","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"return 1;","timeout":"30s",
-					"parameters":[{"name":"a","value":"b"}]}]`), nil
+					"process_tags":"0","show_event_menu":"0","parameters":[{"name":"a","value":"b"}]}]`), nil
 			}
 			return json.RawMessage(`[{"mediatypeid":"9","type":"1","name":"wh","status":"0",
 				"smtp_server":"","smtp_port":"25","smtp_helo":"","smtp_email":"","smtp_security":"0","smtp_verify_peer":"0","smtp_verify_host":"0",
@@ -1441,6 +1445,25 @@ func TestHostRead_RefusesUnrepresentableValues(t *testing.T) {
 				t.Fatalf("the update preflight must refuse what Read refuses, got %v", diags)
 			}
 		})
+	}
+}
+
+func TestHostRead_RefusesIncompleteInterface(t *testing.T) {
+	// An interface entry without main (a partial host.get response) must not
+	// masquerade as "no agent interface": apply would create a duplicate.
+	fixture := `[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+		"interfaces":[{"interfaceid":"5","type":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`
+	c := fixtureServer(t, "host.get", fixture)
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{})
+	d.SetId("1")
+	if diags := resourceHost().ReadContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "incomplete interface") {
+		t.Fatalf("an incomplete interface entry must be refused, got %v", diags)
+	}
+	d2 := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	d2.SetId("1")
+	if diags := resourceHost().UpdateContext(context.Background(), d2, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "incomplete interface") {
+		t.Fatalf("the update preflight must refuse the incomplete interface too, got %v", diags)
 	}
 }
 

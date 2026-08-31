@@ -28,6 +28,10 @@
   flags, webhook menu flags, action pause flags) and interface addresses are
   refused when unrepresentable instead of being normalised to false/defaults;
   the docs describe the explicit-over-environment credential precedence.
+- Partial API responses are refused too: a MISSING required binary bit
+  (status, pause or verify flags) or an incomplete host interface entry
+  (no `interfaceid`/`type`/`main`) cannot masquerade as false or as "no
+  agent interface".
 - A transport failure during the read confirming an "object missing" delete
   surfaces both causes; `localhost` is recognised case-insensitively; the
   acceptance helper client honours `ZABBIX_TLS_INSECURE`/`ZABBIX_CA_CERT_FILE`.

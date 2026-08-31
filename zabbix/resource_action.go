@@ -452,9 +452,10 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		"status": action.Status, "pause_suppressed": action.PauseSuppressed,
 		"pause_symptoms": action.PauseSymptoms, "notify_if_canceled": action.NotifyIfCanceled,
 	} {
-		// Unknown values must not be silently normalised to false: the next
-		// update would write status=1 or flag=0 back to Zabbix.
-		if raw != "" && raw != "0" && raw != "1" {
+		// Unknown OR MISSING values must not be silently normalised to false:
+		// a partial response would hide drift, and the next update would
+		// write the normalised value back to Zabbix.
+		if raw != "0" && raw != "1" {
 			return nil, fmt.Errorf("action has %s %q outside the supported 0/1 values; %s", field, raw, unmanageableHint)
 		}
 	}

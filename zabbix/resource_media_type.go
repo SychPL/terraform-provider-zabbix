@@ -608,9 +608,9 @@ func mediaTypeInts(mt *MediaType) (map[string]int, string, error) {
 		binaries["process_tags"], binaries["show_event_menu"] = mt.ProcessTags, mt.ShowEventMenu
 	}
 	for field, raw := range binaries {
-		// Unknown values must not be silently normalised to false: the next
-		// update would write that false back to Zabbix.
-		if raw != "" && raw != "0" && raw != "1" {
+		// Unknown OR MISSING values must not be silently normalised to false:
+		// an empty status would record an active media type as disabled.
+		if raw != "0" && raw != "1" {
 			return nil, "", fmt.Errorf("has %s %q outside the supported 0/1 values", field, raw)
 		}
 	}

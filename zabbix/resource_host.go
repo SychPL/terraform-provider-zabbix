@@ -245,6 +245,13 @@ func unmanageableHost(id string, host *Host) error {
 	if host.Status != "0" && host.Status != "1" {
 		return fmt.Errorf("host %s has status %q outside the supported 0/1 values; %s", id, host.Status, unmanageableHint)
 	}
+	for _, i := range host.Interfaces {
+		if i.InterfaceID == "" || i.Type == "" || i.Main == "" {
+			// A partial host.get response: an incomplete entry could hide the
+			// real agent interface and apply would create a duplicate.
+			return fmt.Errorf("host %s has an incomplete interface entry in the API response; %s", id, unmanageableHint)
+		}
+	}
 	iface := host.AgentInterface()
 	if iface == nil {
 		return nil
