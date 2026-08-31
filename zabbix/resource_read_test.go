@@ -822,17 +822,20 @@ func TestHostUpdate_VanishedHost(t *testing.T) {
 }
 
 func TestHostResource_DeleteIdempotent(t *testing.T) {
+	// First delete succeeds; a second delete finds the host gone on the
+	// preflight read and returns success without a mutating call.
 	var gone bool
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {
 		case "host.delete":
-			if gone {
-				return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
-			}
 			gone = true
 			return map[string][]string{"hostids": {"7"}}, nil
 		case "host.get":
-			return json.RawMessage(`[]`), nil
+			if gone {
+				return json.RawMessage(`[]`), nil
+			}
+			return json.RawMessage(`[{"hostid":"7","host":"h","name":"h","status":"0","flags":"0","description":"",
+				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],"interfaces":[]}]`), nil
 		}
 		t.Errorf("unexpected method %s", req.Method)
 		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
@@ -848,8 +851,37 @@ func TestHostResource_DeleteIdempotent(t *testing.T) {
 	if diags := r.DeleteContext(context.Background(), d, c); diags.HasError() {
 		t.Fatalf("second delete must be idempotent (object already gone), got %v", diags)
 	}
-	if calls := s.calls("host.delete"); len(calls) != 2 {
-		t.Fatalf("want 2 host.delete calls, got %d", len(calls))
+	if calls := s.calls("host.delete"); len(calls) != 1 {
+		t.Fatalf("want exactly 1 host.delete (the second run must stop at the preflight), got %d", len(calls))
+	}
+}
+
+func TestHostMutations_RefuseDiscoveredHost(t *testing.T) {
+	// The LLD barrier must hold on Update and Delete too: with -refresh=false
+	// Read never runs, so a state inherited from v0.1 could otherwise mutate
+	// or destroy a host owned by a discovery rule.
+	lld := `[{"hostid":"7","host":"lld","name":"lld","status":"0","flags":"4","description":"",
+		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],"interfaces":[]}]`
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method != "host.get" {
+			t.Errorf("no mutating RPC may run against an LLD host, got %s", req.Method)
+			return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+		}
+		return json.RawMessage(lld), nil
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	r := resourceHost()
+
+	d := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "lld", "groups": []interface{}{"2"}})
+	d.SetId("7")
+	if diags := r.UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "low-level discovery") {
+		t.Fatalf("updating an LLD host must be refused, got %v", diags)
+	}
+
+	d2 := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "lld", "groups": []interface{}{"2"}})
+	d2.SetId("7")
+	if diags := r.DeleteContext(context.Background(), d2, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "low-level discovery") {
+		t.Fatalf("deleting an LLD host must be refused, got %v", diags)
 	}
 }
 

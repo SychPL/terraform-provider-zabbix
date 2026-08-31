@@ -6,6 +6,8 @@
 
 - A webhook `timeout` outside 1-60s coming back from the API is refused at
   Read (fail-closed) instead of poisoning the state.
+- The low-level-discovery barrier holds on every mutating path: Update and
+  Delete refuse LLD-owned hosts even under `-refresh=false`.
 - The README documents the two bootstrap calls that carry a secret in the
   request body (`user.login`, `user.checkAuthentication`) and the CI badge
   points at the publishing repository.

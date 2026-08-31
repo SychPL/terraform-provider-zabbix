@@ -28,8 +28,11 @@ func Provider() *schema.Provider {
 	return &schema.Provider{
 		Schema: map[string]*schema.Schema{
 			"url": {
+				// Optional + DefaultFunc, not Required: the SDK's "Missing
+				// required argument" would fire before providerConfigure and
+				// hide the friendlier error that mentions ZABBIX_URL.
 				Type:        schema.TypeString,
-				Required:    true,
+				Optional:    true,
 				DefaultFunc: schema.EnvDefaultFunc("ZABBIX_URL", nil),
 				Description: "Zabbix API JSON-RPC endpoint URL (e.g. https://zabbix.example.com/api_jsonrpc.php). Can also be set with the `ZABBIX_URL` environment variable.",
 			},

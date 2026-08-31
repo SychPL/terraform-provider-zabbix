@@ -1,130 +1,63 @@
 ---
 name: zabbix-provider-contrib
-description: Guide and instructions for contributing to the Zabbix Terraform Provider project, adding new resources, and testing.
+description: Guide for contributing to the Zabbix Terraform Provider - architecture, hard rules established in v0.2, testing and release workflow.
 ---
 
-# Zabbix Terraform Provider Contribution Guide
+# Zabbix Terraform Provider - Contribution Guide (v0.2)
 
-Welcome! This guide outlines the development workflow, codebase architecture, and steps required to add new resources or modify existing ones in the Zabbix Terraform Provider.
+Authoritative references: `SPEC.md` (requirements, verified API facts, review
+decisions) and `README.md` (user-facing behaviour). Read both before changing
+code - most "obvious simplifications" here were rejected for a documented
+reason recorded in SPEC section 4a.
 
----
+## Prerequisites
 
-## 🛠️ Development Prerequisites
+- Go (version pinned in `go.mod`), Terraform >= 1.0, Docker.
+- Target lines: Zabbix 6.4 (baseline) and 7.0 LTS - both run in the CI
+  acceptance matrix. Registry namespace: `SychPL/zabbix` (CI gates stale
+  references); the Go module path stays `github.com/Tensai123/...`.
 
-1. **Go Environment:**
-   This project uses **Go 1.22.6+** located locally under `/home/adi/go/bin/go`.
-   To run commands, always use the absolute path or configure your PATH to include `/home/adi/go/bin`.
+## Architecture
 
-2. **Zabbix Server Version:**
-   The provider is optimized to target **Zabbix 6.4 API**.
-   * It uses `apiinfo.version` to verify compatibility.
-   * Ensure any new API parameters you use are compliant with Zabbix 6.4 specs (such as `selectParentTemplates` and `interfaces` requirements).
+- `zabbix/client.go` - JSON-RPC client: Bearer auth, single-flight re-login
+  with failure memo, strict envelope validation, single-shot requests
+  (`GetBody = nil`, no redirects), mutation results verified against IDs.
+- `zabbix/helpers.go` - shared validators, duration parsing/suppression,
+  readError/deleteError/createError/readAfterCreate.
+- `zabbix/provider.go` - provider schema, credential resolution via raw
+  config, version gate (6.4.1 minimum, untested-line warning).
+- `zabbix/resource_*.go` - one file per resource.
 
----
+## Hard rules (do not regress)
 
-## 📂 Codebase Architecture
+1. Refuse, never guess: any API shape the provider cannot round-trip is
+   rejected at Read AND in the update preflight with the `terraform state rm`
+   hint (same mapping for both).
+2. `d.Partial(true)` is the FIRST statement of every Update; exactly one call.
+3. Every plan-time cross-check skipped for unknown references is repeated on
+   resolved values in Create/Update before any mutation.
+4. Reads are tolerant of foreign-type fields but fail-closed on
+   unrepresentable own-type values and on restricted API responses.
+5. No payload or secret logging (CI greps for it); HTTP error bodies never
+   reach diagnostics.
+6. Tests assert exact values, not shapes; deletions in edit scripts must
+   assert counts (guarded replace silently skips removals).
 
-* [main.go](file:///home/adi/terraform-provider-zabbix/main.go) – Plugin server entrypoint.
-* [zabbix/client.go](file:///home/adi/terraform-provider-zabbix/zabbix/client.go) – Custom Zabbix JSON-RPC 2.0 API client. Handles authentication, RPC requests, and client structs.
-* [zabbix/provider.go](file:///home/adi/terraform-provider-zabbix/zabbix/provider.go) – Configures provider inputs (URL, Credentials) and registers resources.
-* [zabbix/resource_host_group.go](file:///home/adi/terraform-provider-zabbix/zabbix/resource_host_group.go) – Logic for the `zabbix_host_group` resource.
-* [zabbix/resource_host.go](file:///home/adi/terraform-provider-zabbix/zabbix/resource_host.go) – Logic for the `zabbix_host` resource.
+## Testing
 
----
-
-## 📝 Step-by-Step: Adding a New Resource
-
-To add a new Zabbix resource (e.g. `zabbix_template` or `zabbix_user`):
-
-### 1. Extend the Zabbix API Client
-In [client.go](file:///home/adi/terraform-provider-zabbix/zabbix/client.go), add the struct definition and API helper methods for CRUD operations. For example, to manage user groups:
-```go
-type UserGroup struct {
-	Usrgrpid string `json:"usrgrpid"`
-	Name     string `json:"name"`
-}
-
-func (c *ZabbixClient) CreateUserGroup(name string) (string, error) {
-	// Call "usergroup.create" RPC
-}
+```sh
+gofmt -l . && go vet ./... && go test -count=1 ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+docker compose -f docker-compose.acc.yml up -d --wait   # + ANALYZE and server-start wait, see README
+TF_ACC=1 ZABBIX_URL=http://localhost:8082/api_jsonrpc.php ZABBIX_USERNAME=Admin ZABBIX_PASSWORD=zabbix \
+  go test ./zabbix -run TestAcc -count=1 -v
+# Zabbix 7.0: append -f docker-compose.acc-70.yml to the compose commands.
+go generate ./...   # docs; CI fails on drift
 ```
 
-### 2. Create the Resource Controller File
-Create a new file `zabbix/resource_<name>.go` (e.g. `zabbix/resource_user_group.go`). Implement the CRUD schema using the Terraform Plugin SDKv2 template:
-```go
-package zabbix
+## Release
 
-import (
-	"context"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-)
-
-func resourceUserGroup() *schema.Resource {
-	return &schema.Resource{
-		CreateContext: resourceUserGroupCreate,
-		ReadContext:   resourceUserGroupRead,
-		UpdateContext: resourceUserGroupUpdate,
-		DeleteContext: resourceUserGroupDelete,
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-		},
-	}
-}
-```
-
-### 3. Register the Resource in the Provider
-In [provider.go](file:///home/adi/terraform-provider-zabbix/zabbix/provider.go), add the new resource to the `ResourcesMap` array:
-```go
-		ResourcesMap: map[string]*schema.Resource{
-			"zabbix_host_group": resourceHostGroup(),
-			"zabbix_host":       resourceHost(),
-			"zabbix_user_group": resourceUserGroup(), // Add this line
-		},
-```
-
-### 4. Build and Verify
-Run the compilation to ensure everything compiles cleanly:
-```bash
-/home/adi/go/bin/go mod tidy
-/home/adi/go/bin/go build -o terraform-provider-zabbix
-```
-
----
-
-## 🧪 Testing Workflows
-
-### Acceptance Tests
-To run acceptance tests, configure these environment variables so the test suite can connect to a live Zabbix test instance:
-```bash
-export ZABBIX_URL="http://your-zabbix-host/zabbix/api_jsonrpc.php"
-export ZABBIX_USERNAME="Admin"
-export ZABBIX_PASSWORD="yourpassword"
-```
-
-Then run:
-```bash
-/home/adi/go/bin/go test ./zabbix -v
-```
-
----
-
-## 🚀 Git and Contribution Pipeline
-
-1. **Create a branch:**
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-2. **Commit changes:**
-   Follow standard semantic commit styling (e.g. `feat: add zabbix_user_group resource`).
-   ```bash
-   git add .
-   git commit -m "feat: add zabbix_user_group resource"
-   ```
-3. **Push and Open PR:**
-   ```bash
-   git push origin feature/your-feature-name
-   ```
+Tag `vX.Y.Z` on `main` and push - the pipeline (ancestry preflight, full CI
+matrix, GoReleaser with GPG signing, release notes from CHANGELOG.md) does the
+rest; the Terraform Registry ingests new versions automatically. Update the
+CHANGELOG section for the tag first - the release fails without it.

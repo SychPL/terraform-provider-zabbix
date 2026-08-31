@@ -12,6 +12,16 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
+// discoveredHostError refuses hosts created by low-level discovery; they are
+// owned by their discovery rule and the barrier must hold on EVERY mutating
+// path (with -refresh=false Read never runs before apply or destroy).
+func discoveredHostError(id, flags string) error {
+	if flags == "" || flags == "0" {
+		return nil
+	}
+	return fmt.Errorf("host %s was created by low-level discovery (flags=%s) and cannot be managed by this provider; %s", id, flags, unmanageableHint)
+}
+
 // defaultAgentPort is the schema default for "port"; CustomizeDiff and Read
 // reference it so the three places cannot drift apart.
 const defaultAgentPort = "10050"
@@ -219,8 +229,8 @@ func resourceHostRead(ctx context.Context, d *schema.ResourceData, m interface{}
 	if err != nil {
 		return readError(ctx, d, "host", err)
 	}
-	if host.Flags != "" && host.Flags != "0" {
-		return diag.Errorf("host %s was created by low-level discovery (flags=%s) and cannot be managed by this provider; %s", d.Id(), host.Flags, unmanageableHint)
+	if err := discoveredHostError(d.Id(), host.Flags); err != nil {
+		return diag.FromErr(err)
 	}
 
 	groups := make([]string, len(host.Groups))
@@ -277,6 +287,9 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 			return diag.Errorf("host %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to refresh and recreate it", d.Id())
 		}
 		return diag.Errorf("reading host %s: %s", d.Id(), err)
+	}
+	if err := discoveredHostError(d.Id(), host.Flags); err != nil {
+		return diag.FromErr(err)
 	}
 
 	if d.HasChanges("host", "name", "enabled", "description", "groups", "templates") {
@@ -338,7 +351,20 @@ func resourceHostUpdate(ctx context.Context, d *schema.ResourceData, m interface
 func resourceHostDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
-	err := deleteError(ctx, client.DeleteHost(ctx, d.Id()), func(ctx context.Context) error {
+	// The LLD barrier must hold here too: with -refresh=false Read never runs
+	// before destroy, so the delete performs its own preflight.
+	host, err := client.GetHost(ctx, d.Id())
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return nil // already gone - the delete is idempotent
+	case err != nil:
+		return diag.Errorf("reading host %s before delete: %s", d.Id(), err)
+	}
+	if err := discoveredHostError(d.Id(), host.Flags); err != nil {
+		return diag.FromErr(err)
+	}
+
+	err = deleteError(ctx, client.DeleteHost(ctx, d.Id()), func(ctx context.Context) error {
 		_, err := client.GetHost(ctx, d.Id())
 		return err
 	})

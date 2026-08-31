@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/SychPL/terraform-provider-zabbix/actions/workflows/ci.yml/badge.svg)](https://github.com/SychPL/terraform-provider-zabbix/actions/workflows/ci.yml)
 
+Published on the [Terraform Registry](https://registry.terraform.io/providers/SychPL/zabbix):
+`source = "SychPL/zabbix"`.
+
 A Terraform provider for managing Zabbix objects through the JSON-RPC API.
 Tested against **Zabbix 6.4 and 7.0 LTS** (acceptance matrix in CI, see
 [docker-compose.acc.yml](docker-compose.acc.yml)).
