@@ -287,6 +287,20 @@ func TestMediaTypeRead_RefusesRestrictedResponse(t *testing.T) {
 	// status and maxattempts; adopting that would zero out the real
 	// configuration. The read must fail and leave EVERY existing attribute
 	// untouched - including the stored credentials.
+	// The 7.0 restricted set additionally carries description - it must not
+	// be mistaken for a full response either (type "1": empty exec_path
+	// would fake drift on a Script media type).
+	for _, fixture := range []string{
+		`[{"mediatypeid":"9","name":"m","type":"0","status":"0","maxattempts":"3"}]`,
+		`[{"mediatypeid":"9","name":"m","type":"1","status":"0","maxattempts":"3","description":"d"}]`,
+	} {
+		c := fixtureServer(t, "mediatype.get", fixture)
+		d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+		d.SetId("9")
+		if diags := resourceMediaType().ReadContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "Super Admin") {
+			t.Fatalf("a restricted response must be refused (fixture %s), got %v", fixture, diags)
+		}
+	}
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"9","name":"m","type":"0","status":"0","maxattempts":"3"}]`)
 	old := map[string]string{
 		"name": "mail", "type": "0", "enabled": "true",

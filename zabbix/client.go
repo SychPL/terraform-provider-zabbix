@@ -863,12 +863,13 @@ func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType,
 	if err := json.Unmarshal(raw[0], &probe); err != nil {
 		return nil, fmt.Errorf("failed to parse result: %w", err)
 	}
-	// Any of these type-independent fields marks a full response; a server
-	// that ever omits fields foreign to the media type's transport still
-	// returns description/maxsessions, so a full read is never mistaken for
-	// a restricted one (which carries none of the three).
+	// A full response always carries the transport columns; the restricted
+	// set does NOT (6.4.19+: mediatypeid, name, type, status, maxattempts -
+	// and on 7.0 also description, so description must NOT be a sentinel:
+	// it would wave a restricted Script/SMS read through with empty
+	// exec_path/gsm_modem and fake drift instead of a clear refusal).
 	full := false
-	for _, f := range []string{"smtp_server", "description", "maxsessions"} {
+	for _, f := range []string{"smtp_server", "maxsessions"} {
 		if _, ok := probe[f]; ok {
 			full = true
 			break

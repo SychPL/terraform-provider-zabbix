@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
@@ -954,7 +955,15 @@ func TestAccProvider_APIToken(t *testing.T) {
 		t.Fatalf("token.create: %v", err)
 	}
 	tokenID := created["tokenids"][0]
-	t.Cleanup(func() { _ = c.Call(ctx, "token.delete", []string{tokenID}, nil) })
+	t.Cleanup(func() {
+		// An ignored failure would leave an ACTIVE token on the target
+		// Zabbix; a fresh deadline keeps the cleanup from hanging forever.
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := c.Call(cctx, "token.delete", []string{tokenID}, nil); err != nil {
+			t.Errorf("cleanup: token.delete %s failed, the token may still be active: %v", tokenID, err)
+		}
+	})
 
 	var generated []map[string]string
 	if err := c.Call(ctx, "token.generate", []string{tokenID}, &generated); err != nil {

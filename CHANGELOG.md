@@ -32,6 +32,11 @@
   (status, pause or verify flags) or an incomplete host interface entry
   (no `interfaceid`/`type`/`main`) cannot masquerade as false or as "no
   agent interface".
+- The restricted-read probe no longer treats `description` as proof of a
+  full `mediatype.get` response (Zabbix 7.0 includes it in the restricted
+  set): a Script/SMS read under a non-Super-Admin role refuses clearly
+  instead of faking drift. Release tags `v*` are protected by a repository
+  ruleset; the acceptance token cleanup surfaces failures.
 - A transport failure during the read confirming an "object missing" delete
   surfaces both causes; `localhost` is recognised case-insensitively; the
   acceptance helper client honours `ZABBIX_TLS_INSECURE`/`ZABBIX_CA_CERT_FILE`.
