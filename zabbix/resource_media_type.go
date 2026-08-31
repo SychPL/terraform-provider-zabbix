@@ -89,6 +89,15 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 			Description:      "Interval between delivery attempts, 0-1h (e.g. `10s`, `1m`).",
 		},
 		// Email
+		"email_provider": {
+			// "provider" is a reserved attribute name in Terraform, hence the
+			// prefixed schema name; it maps to the API field `provider`.
+			Type:         schema.TypeInt,
+			Optional:     true,
+			Default:      0,
+			ValidateFunc: validation.IntInSlice([]int{0, 1, 2, 3, 4}),
+			Description:  "SMTP provider preset (API field `provider`): 0 - generic SMTP, 1 - Gmail, 2 - Gmail relay, 3 - Office365, 4 - Office365 relay (Email).",
+		},
 		"content_type": {
 			Type:         schema.TypeInt,
 			Optional:     true,
@@ -240,7 +249,7 @@ func resourceMediaTypeSchema() map[string]*schema.Schema {
 
 // mediaTypeFields lists the attributes that belong to each media type type.
 var mediaTypeFields = map[int][]string{
-	mediaTypeEmail:   {"smtp_server", "smtp_port", "smtp_helo", "smtp_email", "smtp_security", "smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "password", "content_type"},
+	mediaTypeEmail:   {"smtp_server", "smtp_port", "smtp_helo", "smtp_email", "smtp_security", "smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "password", "content_type", "email_provider"},
 	mediaTypeScript:  {"exec_path"},
 	mediaTypeSMS:     {"gsm_modem"},
 	mediaTypeWebhook: {"script", "timeout", "parameter", "process_tags", "show_event_menu", "event_menu_url", "event_menu_name"},
@@ -505,6 +514,7 @@ func expandMediaType(d *schema.ResourceData) *MediaType {
 		MaxAttempts:        strconv.Itoa(d.Get("max_attempts").(int)),
 		AttemptInterval:    d.Get("attempt_interval").(string),
 		ContentType:        strconv.Itoa(d.Get("content_type").(int)),
+		EmailProvider:      strconv.Itoa(d.Get("email_provider").(int)),
 		ProcessTags:        boolToFlag(d.Get("process_tags").(bool)),
 		ShowEventMenu:      boolToFlag(d.Get("show_event_menu").(bool)),
 		EventMenuURL:       d.Get("event_menu_url").(string),
@@ -550,7 +560,7 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	// Numeric defaults come from the schema (single source); empty API values
 	// (objects created outside the provider) keep the default.
 	ints := map[string]int{"type": mtType}
-	for _, f := range []string{"smtp_port", "smtp_security", "smtp_authentication", "content_type", "max_sessions", "max_attempts"} {
+	for _, f := range []string{"smtp_port", "smtp_security", "smtp_authentication", "content_type", "email_provider", "max_sessions", "max_attempts"} {
 		ints[f] = mediaTypeSchema[f].Default.(int)
 	}
 	for field, raw := range map[string]string{"max_sessions": mt.MaxSessions, "max_attempts": mt.MaxAttempts} {
@@ -565,7 +575,7 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	}
 	if mtType == mediaTypeEmail {
 		for field, raw := range map[string]string{
-			"smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication, "content_type": mt.ContentType,
+			"smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication, "content_type": mt.ContentType, "email_provider": mt.EmailProvider,
 		} {
 			if raw == "" {
 				continue // keep the schema default
@@ -618,6 +628,7 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 		values["smtp_verify_host"] = mt.SMTPVerifyHost == "1"
 		values["smtp_authentication"] = ints["smtp_authentication"]
 		values["content_type"] = ints["content_type"]
+		values["email_provider"] = ints["email_provider"]
 		if ints["smtp_authentication"] == 1 {
 			values["username"] = mt.Username
 			values["password"] = mt.Passwd

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- `zabbix_media_type.email_provider` - the Email SMTP provider preset (API
+  field `provider`: generic SMTP, Gmail, Gmail relay, Office365, Office365
+  relay); previously invisible to Terraform, so preset drift was undetectable.
+
 ### Fixed
 
 - A webhook `timeout` outside 1-60s coming back from the API is refused at

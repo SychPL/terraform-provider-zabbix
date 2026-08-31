@@ -403,6 +403,17 @@ func TestForeignMediaTypeFields_ResolvedType(t *testing.T) {
 	}
 }
 
+func TestProviderConfigure_EnvCACertFile(t *testing.T) {
+	clearProviderEnv(t)
+	missing := t.TempDir() + "/missing-ca.pem"
+	t.Setenv("ZABBIX_CA_CERT_FILE", missing)
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": "https://zabbix.example.com/api_jsonrpc.php", "api_token": "t"})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "missing-ca.pem") {
+		t.Fatalf("ZABBIX_CA_CERT_FILE must flow into the client config end to end, got %v", diags)
+	}
+}
+
 func TestWrittenInRaw(t *testing.T) {
 	raw := cty.ObjectVal(map[string]cty.Value{
 		"api_token": cty.StringVal("t"),
@@ -604,6 +615,8 @@ func TestMediaTypeCustomizeDiff(t *testing.T) {
 		{"content_type on webhook", map[string]interface{}{"name": "m", "type": 4, "script": "x", "content_type": 0}, "content_type is not supported for media type 4"},
 		{"process_tags on email", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "process_tags": true}, "process_tags is not supported for media type 0"},
 		{"email content_type ok", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "content_type": 0}, ""},
+		{"email provider preset ok", map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e", "email_provider": 3}, ""},
+		{"email_provider on webhook", map[string]interface{}{"name": "m", "type": 4, "script": "x", "email_provider": 1}, "email_provider is not supported for media type 4"},
 		{"sms max_sessions", map[string]interface{}{"name": "m", "type": 2, "gsm_modem": "/dev/ttyS0", "max_sessions": 5}, "max_sessions must be 1"},
 		{"bad attempt_interval", map[string]interface{}{"name": "m", "type": 4, "script": "x", "attempt_interval": "2h"}, "attempt_interval must be"},
 		{"attempt_interval macro", map[string]interface{}{"name": "m", "type": 4, "script": "x", "attempt_interval": "{$IV}"}, "attempt_interval must be"},

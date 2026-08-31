@@ -752,6 +752,10 @@ func TestMediaTypeParams_TypeAware(t *testing.T) {
 	if emailAuth["passwd"] != "p" {
 		t.Error("passwd must be sent when smtp_authentication is 1")
 	}
+	o365 := mediaTypeParams(&MediaType{Type: "0", SMTPServer: "smtp.office365.com", EmailProvider: "3"})
+	if o365["provider"] != "3" {
+		t.Errorf("the email provider preset must be sent, got %v", o365["provider"])
+	}
 
 	// Common fields are always sent; type-specific extras only for their type.
 	full := mediaTypeParams(&MediaType{Type: "4", Script: "return 1;", Timeout: "30s",
@@ -761,6 +765,7 @@ func TestMediaTypeParams_TypeAware(t *testing.T) {
 		"description": "d", "maxsessions": "0", "maxattempts": "5", "attempt_interval": "1m",
 		"process_tags": "1", "show_event_menu": "1", "event_menu_url": "https://x", "event_menu_name": "Open",
 		"content_type": "1", // email-only: reset to the API default for a webhook
+		"provider":     "0", // likewise
 	} {
 		if full[k] != want {
 			t.Errorf("%s: want %v, got %v", k, want, full[k])

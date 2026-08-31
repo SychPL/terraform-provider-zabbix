@@ -122,8 +122,8 @@ func TestMediaTypeRead_TypeAwareReset(t *testing.T) {
 	if d.Get("script") != "return 1;" || d.Get("timeout") != "10s" {
 		t.Errorf("webhook attributes not mapped")
 	}
-	if d.Get("content_type") != 1 {
-		t.Errorf("content_type is an email field and must be reset to its schema default for a webhook, got %v", d.Get("content_type"))
+	if d.Get("content_type") != 1 || d.Get("email_provider") != 0 {
+		t.Errorf("email-only fields must be reset to their schema defaults for a webhook, got content_type=%v email_provider=%v", d.Get("content_type"), d.Get("email_provider"))
 	}
 	if d.Get("description") != "managed" || d.Get("max_sessions") != 0 || d.Get("max_attempts") != 5 || d.Get("attempt_interval") != "1m" {
 		t.Errorf("common fields not mapped: %v %v %v %v", d.Get("description"), d.Get("max_sessions"), d.Get("max_attempts"), d.Get("attempt_interval"))
@@ -141,13 +141,13 @@ func TestMediaTypeRead_EmailWithAuth(t *testing.T) {
 	c := fixtureServer(t, "mediatype.get", `[{"mediatypeid":"45","type":"0","name":"mail","status":"1",
 		"smtp_server":"mail.x","smtp_port":"587","smtp_helo":"x","smtp_email":"a@x","smtp_security":"1",
 		"smtp_verify_peer":"1","smtp_verify_host":"0","smtp_authentication":"1","username":"u","passwd":"secret",
-		"exec_path":"","gsm_modem":"","script":"","timeout":"30s","content_type":"0","parameters":[]}]`)
+		"exec_path":"","gsm_modem":"","script":"","timeout":"30s","content_type":"0","provider":"3","parameters":[]}]`)
 	d := readInto(t, resourceMediaType(), c, "45")
 	want := map[string]interface{}{
 		"enabled": false, "smtp_server": "mail.x", "smtp_port": 587, "smtp_security": 1,
 		"smtp_verify_peer": true, "smtp_verify_host": false, "smtp_authentication": 1,
 		"username": "u", "password": "secret", "script": "", "timeout": "30s",
-		"content_type": 0, "max_attempts": 3, "attempt_interval": "10s",
+		"content_type": 0, "email_provider": 3, "max_attempts": 3, "attempt_interval": "10s",
 	}
 	for k, v := range want {
 		if got := d.Get(k); got != v {
@@ -772,6 +772,36 @@ func TestPartialStateOnFailedUpdates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHostUpdate_InterfaceDeleteFailureKeepsID(t *testing.T) {
+	// Removing the address from the configuration takes the interface-delete
+	// branch; its failure must surface with the ID kept, like the other
+	// partial-failure paths.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "host.get":
+			return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
+				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
+				"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`), nil
+		case "host.update":
+			return map[string][]string{"hostids": {"1"}}, nil
+		case "hostinterface.delete":
+			return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: "boom"}
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceHost().Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	d.SetId("1")
+	diags := resourceHost().UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "removing agent interface") || d.Id() != "1" {
+		t.Fatalf("a failed interface delete must surface and keep the ID, got %v id=%q", diags, d.Id())
+	}
+	if len(s.calls("hostinterface.delete")) != 1 {
+		t.Fatal("the interface delete must have been attempted exactly once")
 	}
 }
 

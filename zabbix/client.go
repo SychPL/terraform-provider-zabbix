@@ -209,6 +209,7 @@ type MediaType struct {
 	MaxAttempts        string           `json:"maxattempts"`      // delivery attempts, 1-100
 	AttemptInterval    string           `json:"attempt_interval"` // 0-1h with time suffix
 	ContentType        string           `json:"content_type"`     // Email: "0" plain text, "1" HTML
+	EmailProvider      string           `json:"provider"`         // Email preset: "0" generic SMTP, "1" Gmail, "2" Gmail relay, "3" Office365, "4" Office365 relay
 	ProcessTags        string           `json:"process_tags"`     // Webhook: "1" = response processed as tags
 	ShowEventMenu      string           `json:"show_event_menu"`  // Webhook: "1" = event menu entry
 	EventMenuURL       string           `json:"event_menu_url"`   // Webhook
@@ -774,6 +775,7 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 		"attempt_interval": mt.AttemptInterval,
 		// Type-specific fields reset to API defaults unless the type sets them.
 		"content_type":    "1",
+		"provider":        "0",
 		"process_tags":    "0",
 		"show_event_menu": "0",
 		"event_menu_url":  "",
@@ -790,6 +792,7 @@ func mediaTypeParams(mt *MediaType) map[string]interface{} {
 		params["smtp_verify_host"] = mt.SMTPVerifyHost
 		params["smtp_authentication"] = mt.SMTPAuthentication
 		params["content_type"] = mt.ContentType
+		params["provider"] = mt.EmailProvider
 		if mt.SMTPAuthentication == "1" {
 			params["username"] = mt.Username
 			params["passwd"] = mt.Passwd
@@ -831,7 +834,7 @@ func (c *ZabbixClient) GetMediaType(ctx context.Context, id string) (*MediaType,
 			"smtp_verify_peer", "smtp_verify_host", "smtp_authentication", "username", "passwd",
 			"exec_path", "gsm_modem", "script", "timeout", "parameters",
 			"description", "maxsessions", "maxattempts", "attempt_interval",
-			"content_type", "process_tags", "show_event_menu", "event_menu_url", "event_menu_name"},
+			"content_type", "provider", "process_tags", "show_event_menu", "event_menu_url", "event_menu_name"},
 	}
 	var raw []json.RawMessage
 	if err := c.Call(ctx, "mediatype.get", params, &raw); err != nil {

@@ -87,6 +87,7 @@ resource "zabbix_media_type" "email" {
 - `attempt_interval` (String) Interval between delivery attempts, 0-1h (e.g. `10s`, `1m`).
 - `content_type` (Number) Message format: 0 - plain text, 1 - HTML (Email).
 - `description` (String) Description of the media type.
+- `email_provider` (Number) SMTP provider preset (API field `provider`): 0 - generic SMTP, 1 - Gmail, 2 - Gmail relay, 3 - Office365, 4 - Office365 relay (Email).
 - `enabled` (Boolean) Whether the media type is enabled.
 - `event_menu_name` (String) Name of the event menu entry (Webhook).
 - `event_menu_url` (String) URL of the event menu entry, supports `{EVENT.TAGS.*}` macros (Webhook).
