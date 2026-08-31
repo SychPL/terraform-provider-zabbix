@@ -317,3 +317,23 @@ twarde wymaganie zlamaloby lokalny workflow docker-compose bez realnego zysku.
   w go-modulowym module path (kod, niewidoczny dla uzytkownikow Terraforma) i jako upstream.
 - Environment `release` wymaga skonfigurowania required reviewers w ustawieniach repo, zeby faktycznie
   bramkowal uzycie klucza GPG.
+
+## 6. Model zaufania odpowiedzi API i zamrozenie hardeningu (v0.2)
+
+Decyzja z 2026-08-31 (po 38 rundach recenzji):
+
+- Odpowiedzi z skonfigurowanego endpointu sa TRAKTOWANE JAKO POCHODZACE z
+  prawdziwego Zabbixa wspieranej linii (6.4.1+, 7.0.x), po TLS. Obrony przed
+  odpowiedziami spreparowanymi lub czesciowymi (posrednik, proxy) sa wdrozone
+  szeroko (scisla koperta JSON-RPC, weryfikacja ID mutacji, zakresy schematu,
+  obecnosc bitow binarnych, kompletnosc interfejsow) i na tym poziomie
+  ZAMROZONE jako best-effort: dalsze poglebianie tej klasy (typy pol, dlugosci
+  tablic, kolejne warianty czesciowosci) nie jest celem recenzji v0.2.x.
+- Znalezisko recenzji jest DOPUSZCZALNE, gdy wskazuje realny scenariusz:
+  konkretna wersja/zachowanie Zabbixa albo realne uzycie Terraforma, ktore je
+  wyzwala, z widocznym skutkiem dla uzytkownika. Scenariusze wymagajace
+  wrogiego posrednika modyfikujacego odpowiedzi = poza zakresem (patrz wyzej).
+- Uzasadnienie: analiza 70 werdyktow pokazala oscylacje 5-10/10 na
+  praktycznie identycznych drzewach (r32=10/10, r34=5/10 z P1 istniejacym juz
+  w r32) - pojedyncza recenzja adwersarialna to probka losowa, a przestrzen
+  "co jesli odpowiedz jest zepsuta" jest nieograniczona z konstrukcji.
