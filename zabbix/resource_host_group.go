@@ -80,6 +80,12 @@ func resourceHostGroupDelete(ctx context.Context, d *schema.ResourceData, m inte
 		return err
 	})
 	if err != nil {
+		if !IsObjectMissing(err) {
+			// The most common refusal is a group that still contains hosts
+			// (or is the last group of some host) - say so instead of
+			// surfacing a bare application error.
+			return diag.Errorf("deleting host group %s: %s (a group that still contains hosts, or is the last group of some host, cannot be deleted)", d.Id(), err)
+		}
 		return diag.Errorf("deleting host group %s: %s", d.Id(), err)
 	}
 	return nil

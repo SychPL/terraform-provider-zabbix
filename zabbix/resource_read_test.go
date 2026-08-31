@@ -1228,6 +1228,49 @@ func TestHostGroupUpdate_VanishedGroup(t *testing.T) {
 	}
 }
 
+func TestActionResource_DeleteIdempotent(t *testing.T) {
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		switch req.Method {
+		case "action.delete":
+			return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
+		case "action.get":
+			return json.RawMessage(`[]`), nil
+		}
+		return nil, &JsonRpcError{Code: -32601, Message: "Method not found."}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{"name": "a"})
+	d.SetId("9")
+	if diags := resourceAction().DeleteContext(context.Background(), d, c); diags.HasError() {
+		t.Fatalf("deleting an already removed action must succeed, got %v", diags)
+	}
+}
+
+func TestFlattenAction_NonNumericRefusesWithHint(t *testing.T) {
+	_, err := flattenAction(&Action{EventSource: "zero"})
+	if err == nil || !strings.Contains(err.Error(), "terraform state rm") {
+		t.Fatalf("a non-numeric eventsource must refuse with the state-rm hint, got %v", err)
+	}
+}
+
+func TestHostGroupDelete_NonEmptyGroupHint(t *testing.T) {
+	// Zabbix refuses to delete a group that still contains hosts; the
+	// operator should see why, not a bare application error.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method != "hostgroup.delete" {
+			t.Errorf("unexpected method %s", req.Method)
+		}
+		return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: `host "h1" cannot be without host group`}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceHostGroup().Schema, map[string]interface{}{"name": "g"})
+	d.SetId("4")
+	diags := resourceHostGroup().DeleteContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "still contains hosts") || d.Id() != "4" {
+		t.Fatalf("a refused group delete must carry the non-empty-group hint and keep the ID, got %v id=%q", diags, d.Id())
+	}
+}
+
 func TestHostGroupCreate_EmptyReadKeepsID(t *testing.T) {
 	// A read that comes back empty right after a successful create is a
 	// consistency problem; forgetting the ID would orphan the new object.

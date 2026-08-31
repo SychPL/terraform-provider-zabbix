@@ -7,7 +7,6 @@ import (
 	"net"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -144,10 +143,13 @@ func deleteError(ctx context.Context, err error, confirm func(context.Context) e
 
 // timePeriodRe matches the Zabbix time period format used by time-period
 // conditions: "d-d,hh:mm-hh:mm" entries separated by semicolons, e.g.
-// "1-7,00:00-24:00" or "1-5,09:00-18:00;6-7,10:00-16:00".
-var timePeriodRe = regexp.MustCompile(`^[1-7](-[1-7])?,([01]?\d|2[0-3]):[0-5]\d-([01]?\d|2[0-4]):[0-5]\d(;[1-7](-[1-7])?,([01]?\d|2[0-3]):[0-5]\d-([01]?\d|2[0-4]):[0-5]\d)*;?$`)
+// "1-7,00:00-24:00" or "1-5,09:00-18:00;6-7,10:00-16:00". The range end is
+// capped at 24:00 (Zabbix rejects 24:01-24:59), so the typo fails the plan,
+// not the apply.
+var timePeriodRe = regexp.MustCompile(`^[1-7](-[1-7])?,([01]?\d|2[0-3]):[0-5]\d-(([01]?\d|2[0-3]):[0-5]\d|24:00)(;[1-7](-[1-7])?,([01]?\d|2[0-3]):[0-5]\d-(([01]?\d|2[0-3]):[0-5]\d|24:00))*;?$`)
 
 var userMacroRe = regexp.MustCompile(`^\{\$[A-Z0-9_.]+(:.*)?\}$`)
+var dnsCharsRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 var durationRe = regexp.MustCompile(`^(\d+)([smhdw]?)$`)
 
 // parseZabbixDuration parses a Zabbix time suffix value ("30s", "1h", "90")
@@ -212,14 +214,15 @@ func validateIP(v interface{}, k string) ([]string, []error) {
 	return nil, []error{fmt.Errorf("%s: %q is not a valid IP address or user macro", k, s)}
 }
 
-// validateDNS accepts an empty value, a user macro or a DNS name (no
-// whitespace, at most 255 characters); typos fail the plan, not the apply.
+// validateDNS accepts an empty value, a user macro or a DNS name (letters,
+// digits, dots, hyphens, underscores; at most 255 characters); typos fail the
+// plan, not the apply.
 func validateDNS(v interface{}, k string) ([]string, []error) {
 	s := v.(string)
 	if s == "" || userMacroRe.MatchString(s) {
 		return nil, nil
 	}
-	if utf8.RuneCountInString(s) > 255 || strings.ContainsAny(s, " \t") {
+	if utf8.RuneCountInString(s) > 255 || !dnsCharsRe.MatchString(s) {
 		return nil, []error{fmt.Errorf("%s: %q is not a valid DNS name or user macro", k, s)}
 	}
 	return nil, nil

@@ -403,6 +403,23 @@ func TestForeignMediaTypeFields_ResolvedType(t *testing.T) {
 	}
 }
 
+func TestProviderConfigure_CheckAuthRequiresUserID(t *testing.T) {
+	clearProviderEnv(t)
+	// A well-formed envelope with an empty user object (an intermediary stub)
+	// must not pass for a verified token.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		if req.Method == "user.checkAuthentication" {
+			return map[string]string{}, nil
+		}
+		return "6.4.21", nil
+	})
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{"url": s.URL, "api_token": "t"})
+	_, diags := providerConfigure(context.Background(), d)
+	if !diags.HasError() || !diagContains(diags, diag.Error, "userid") {
+		t.Fatalf("an empty checkAuthentication result must fail configure, got %v", diags)
+	}
+}
+
 func TestProviderConfigure_EnvCACertFile(t *testing.T) {
 	clearProviderEnv(t)
 	missing := t.TempDir() + "/missing-ca.pem"
@@ -569,6 +586,9 @@ func TestHostCustomizeDiff(t *testing.T) {
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "use_ip": false, "dns": "bad name"}); err == nil || !strings.Contains(err.Error(), "not a valid DNS name") {
 		t.Errorf("a DNS name with whitespace must fail at plan time, got %v", err)
 	}
+	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "use_ip": false, "dns": "db01,,example.com"}); err == nil || !strings.Contains(err.Error(), "not a valid DNS name") {
+		t.Errorf("a DNS name with illegal characters must fail at plan time, got %v", err)
+	}
 	if err := planDiff(t, r, map[string]interface{}{"host": "h", "groups": groups, "use_ip": false, "dns": "{$AGENT.DNS}"}); err != nil {
 		t.Errorf("a user macro must be a valid dns, got %v", err)
 	}
@@ -671,6 +691,7 @@ func TestActionCustomizeDiff(t *testing.T) {
 		{"time period with in operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 6, "operator": 4, "value": "1-7,00:00-24:00"}}}, ""},
 		{"time period multiple ranges", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 6, "operator": 4, "value": "1-5,09:00-18:00;6-7,10:00-16:00"}}}, ""},
 		{"time period malformed", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 6, "operator": 4, "value": "1-7,00:00-24:00z"}}}, "time period"},
+		{"time period end past 24:00", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 6, "operator": 4, "value": "1-7,00:00-24:59"}}}, "time period"},
 		{"empty group id element", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"user_groups": []interface{}{""}})}, "not be an empty string"},
 		{"severity with contains operator", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 4, "operator": 2, "value": "4"}}}, "operator 2 is not valid for condition type 4"},
 		{"removed condition type 16", map[string]interface{}{"name": "a", "operation": op(map[string]interface{}{"users": []interface{}{"1"}}), "condition": []interface{}{map[string]interface{}{"conditiontype": 16, "operator": 10, "value": ""}}}, "expected condition.0.conditiontype to be one of"},

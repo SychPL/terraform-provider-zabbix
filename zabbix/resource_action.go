@@ -413,12 +413,23 @@ func expandAction(d *schema.ResourceData) *Action {
 	return action
 }
 
+// actionAtoi wraps atoi so a non-numeric value coming back from the API (an
+// intermediary, a future version) refuses with the same state-rm hint as
+// every other unmanageable action shape.
+func actionAtoi(field, s string) (int, error) {
+	n, err := atoi(field, s)
+	if err != nil {
+		return 0, fmt.Errorf("%s; %s", err, unmanageableHint)
+	}
+	return n, nil
+}
+
 func flattenAction(action *Action) (map[string]interface{}, error) {
-	eventsource, err := atoi("eventsource", action.EventSource)
+	eventsource, err := actionAtoi("eventsource", action.EventSource)
 	if err != nil {
 		return nil, err
 	}
-	evaltype, err := atoi("filter.evaltype", action.Filter.EvalType)
+	evaltype, err := actionAtoi("filter.evaltype", action.Filter.EvalType)
 	if err != nil {
 		return nil, err
 	}
@@ -437,11 +448,11 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 
 	conds := make([]interface{}, 0, len(action.Filter.Conditions))
 	for _, c := range action.Filter.Conditions {
-		ct, err := atoi("conditiontype", c.ConditionType)
+		ct, err := actionAtoi("conditiontype", c.ConditionType)
 		if err != nil {
 			return nil, err
 		}
-		op, err := atoi("operator", c.Operator)
+		op, err := actionAtoi("operator", c.Operator)
 		if err != nil {
 			return nil, err
 		}
@@ -455,7 +466,7 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 
 	ops := make([]interface{}, 0, len(action.Operations))
 	for _, o := range action.Operations {
-		opType, err := atoi("operationtype", o.OperationType)
+		opType, err := actionAtoi("operationtype", o.OperationType)
 		if err != nil {
 			return nil, err
 		}
@@ -467,11 +478,11 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		if len(o.OpConditions) > 0 {
 			return nil, fmt.Errorf("action contains an operation with operation conditions (opconditions) which this provider does not support; %s", unmanageableHint)
 		}
-		from, err := atoi("esc_step_from", o.EscStepFrom)
+		from, err := actionAtoi("esc_step_from", o.EscStepFrom)
 		if err != nil {
 			return nil, err
 		}
-		to, err := atoi("esc_step_to", o.EscStepTo)
+		to, err := actionAtoi("esc_step_to", o.EscStepTo)
 		if err != nil {
 			return nil, err
 		}

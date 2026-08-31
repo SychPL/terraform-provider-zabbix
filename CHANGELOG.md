@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `CheckAuth` requires a non-empty `userid` in the `user.checkAuthentication`
+  response: a well-formed envelope carrying an empty object no longer passes
+  for a verified token.
+- Time-period conditions cap the range end at `24:00` (a `24:59` typo now
+  fails the plan, not the apply), and interface `dns` rejects characters
+  outside `A-Za-z0-9._-` at plan time.
+- Non-numeric values coming back in an action refuse with the same
+  `terraform state rm` hint as every other unmanageable shape.
+- Deleting a host group that still contains hosts explains why Zabbix refused
+  instead of surfacing a bare application error.
+
+### Changed
+
+- Dependabot also watches the digest-pinned acceptance images (docker-compose
+  ecosystem), so the tested Zabbix/Postgres versions do not silently age.
+
 ## v0.2.2 (2026-08-31)
 
 ### Added

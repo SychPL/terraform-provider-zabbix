@@ -527,8 +527,19 @@ func (c *ZabbixClient) rawCall(ctx context.Context, method string, params interf
 // role having access to any particular API method; the Zabbix API requires it
 // to be called without an Authorization header.
 func (c *ZabbixClient) CheckAuth(ctx context.Context) error {
-	var user map[string]interface{}
-	return c.rawCall(ctx, "user.checkAuthentication", map[string]string{"token": c.apiToken}, "", &user)
+	var user struct {
+		UserID string `json:"userid"`
+	}
+	if err := c.rawCall(ctx, "user.checkAuthentication", map[string]string{"token": c.apiToken}, "", &user); err != nil {
+		return err
+	}
+	if user.UserID == "" {
+		// A well-formed envelope carrying an empty object (an intermediary
+		// stub) must not pass for a verified token; failing here beats a
+		// confusing error on the first real mutation.
+		return fmt.Errorf("user.checkAuthentication returned no userid; refusing to treat the credentials as verified")
+	}
+	return nil
 }
 
 // GetVersion calls apiinfo.version (unauthenticated).

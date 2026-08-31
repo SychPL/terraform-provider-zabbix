@@ -12,3 +12,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # The digest-pinned acceptance images (Zabbix 6.4/7.0, Postgres) must not
+  # silently age; dependabot proposes reviewed digest/tag bumps.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
