@@ -442,6 +442,12 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 	if evaltype == 3 {
 		return nil, fmt.Errorf("action uses a custom condition expression (evaltype 3) which this provider does not support; %s", unmanageableHint)
 	}
+	if evaltype < 0 || evaltype > 2 {
+		return nil, fmt.Errorf("action has evaltype %d which this provider does not support; %s", evaltype, unmanageableHint)
+	}
+	if _, errs := validateEscPeriod(action.EscPeriod, "esc_period"); len(errs) > 0 {
+		return nil, fmt.Errorf("action %s; %s", errs[0], unmanageableHint)
+	}
 	if len(action.RecoveryOperations) != 0 || len(action.UpdateOperations) != 0 {
 		return nil, fmt.Errorf("action has recovery or update operations which this provider does not support; %s", unmanageableHint)
 	}
@@ -460,6 +466,20 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		// replaces the whole filter).
 		if allowed, known := conditionOperators[ct]; !known || !intIn(op, allowed) {
 			return nil, fmt.Errorf("action uses condition type %d with operator %d which this provider does not support; %s", ct, op, unmanageableHint)
+		}
+		// The same value rules the plan enforces: what Read adopts, a later
+		// update must be able to write back unchanged.
+		switch {
+		case strings.TrimSpace(c.Value) == "":
+			return nil, fmt.Errorf("action condition of type %d has an empty value; %s", ct, unmanageableHint)
+		case ct == 4 && !intIn(atoiOr(c.Value, -1), []int{0, 1, 2, 3, 4, 5}):
+			return nil, fmt.Errorf("action severity condition has value %q outside 0-5; %s", c.Value, unmanageableHint)
+		case ct == 6 && !userMacroRe.MatchString(c.Value) && !timePeriodRe.MatchString(c.Value):
+			return nil, fmt.Errorf("action time-period condition has unsupported value %q; %s", c.Value, unmanageableHint)
+		case ct == 26 && c.Value2 == "":
+			return nil, fmt.Errorf("action event-tag-value condition is missing value2; %s", unmanageableHint)
+		case ct != 26 && c.Value2 != "":
+			return nil, fmt.Errorf("action condition of type %d carries value2 %q, which the provider only supports for type 26; %s", ct, c.Value2, unmanageableHint)
 		}
 		conds = append(conds, map[string]interface{}{"conditiontype": ct, "operator": op, "value": c.Value, "value2": c.Value2})
 	}
@@ -486,6 +506,12 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
+		if from < 1 || (to != 0 && to < from) {
+			return nil, fmt.Errorf("action operation has escalation steps from=%d to=%d outside the supported model; %s", from, to, unmanageableHint)
+		}
+		if _, errs := validateOperationEscPeriod(o.EscPeriod, "operation esc_period"); len(errs) > 0 {
+			return nil, fmt.Errorf("action %s; %s", errs[0], unmanageableHint)
+		}
 		groups := make([]string, 0, len(o.OpMessageGrp))
 		for _, g := range o.OpMessageGrp {
 			groups = append(groups, g.Usrgrpid)
@@ -493,6 +519,11 @@ func flattenAction(action *Action) (map[string]interface{}, error) {
 		users := make([]string, 0, len(o.OpMessageUsr))
 		for _, u := range o.OpMessageUsr {
 			users = append(users, u.UserID)
+		}
+		if dm := o.OpMessage; dm != nil && dm.DefaultMsg != "0" && dm.DefaultMsg != "1" {
+			// Anything but the two documented values cannot be represented; a
+			// guessed false would send default_msg=0 with an empty body.
+			return nil, fmt.Errorf("action operation has default_msg %q which this provider cannot represent; %s", dm.DefaultMsg, unmanageableHint)
 		}
 		if o.OpMessage == nil {
 			// Every "send message" operation carries an opmessage object; a

@@ -212,7 +212,7 @@ func writtenInRaw(raw cty.Value, attr string) bool {
 }
 
 func isLoopback(host string) bool {
-	if host == "localhost" {
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)

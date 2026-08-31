@@ -1061,6 +1061,76 @@ func TestActionResource_UpdateSendsClearedRecipients(t *testing.T) {
 	}
 }
 
+func TestMediaTypeRead_RefusesOutOfRangeValues(t *testing.T) {
+	// d.Set bypasses schema validators: values a plan could never produce
+	// (a newer API line, an intermediary) must be refused, not adopted.
+	base := `[{"mediatypeid":"45","type":"0","name":"m","status":"0",
+		"smtp_server":"s","smtp_port":"%PORT%","smtp_helo":"h","smtp_email":"e","smtp_security":"%SEC%","smtp_verify_peer":"0","smtp_verify_host":"0",
+		"smtp_authentication":"%AUTH%","username":"","passwd":"","exec_path":"","gsm_modem":"","script":"","timeout":"30s",
+		"content_type":"0","provider":"%PROV%","maxattempts":"%ATT%","attempt_interval":"%AI%","parameters":[]}]`
+	ok := strings.NewReplacer("%PORT%", "25", "%SEC%", "0", "%AUTH%", "0", "%PROV%", "0", "%ATT%", "3", "%AI%", "10s")
+	for name, repl := range map[string]*strings.Replacer{
+		"email_provider 5":      strings.NewReplacer("%PROV%", "5", "%PORT%", "25", "%SEC%", "0", "%AUTH%", "0", "%ATT%", "3", "%AI%", "10s"),
+		"smtp_authentication 2": strings.NewReplacer("%AUTH%", "2", "%PORT%", "25", "%SEC%", "0", "%PROV%", "0", "%ATT%", "3", "%AI%", "10s"),
+		"max_attempts 0":        strings.NewReplacer("%ATT%", "0", "%PORT%", "25", "%SEC%", "0", "%AUTH%", "0", "%PROV%", "0", "%AI%", "10s"),
+		"attempt_interval 2h":   strings.NewReplacer("%AI%", "2h", "%PORT%", "25", "%SEC%", "0", "%AUTH%", "0", "%PROV%", "0", "%ATT%", "3"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := fixtureServer(t, "mediatype.get", repl.Replace(base))
+			d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{})
+			d.SetId("45")
+			diags := resourceMediaType().ReadContext(context.Background(), d, c)
+			if !diags.HasError() || !strings.Contains(diags[0].Summary, "outside the supported") || !strings.Contains(diags[0].Summary, "terraform state rm") {
+				t.Fatalf("an out-of-range value must be refused with the hint, got %v", diags)
+			}
+		})
+	}
+	// The update preflight refuses exactly the same set, BEFORE mutating.
+	bad := strings.NewReplacer("%PROV%", "5", "%PORT%", "25", "%SEC%", "0", "%AUTH%", "0", "%ATT%", "3", "%AI%", "10s")
+	c := fixtureServer(t, "mediatype.get", bad.Replace(base))
+	d := schema.TestResourceDataRaw(t, resourceMediaType().Schema, map[string]interface{}{"name": "m", "type": 0, "smtp_server": "s", "smtp_helo": "h", "smtp_email": "e"})
+	d.SetId("45")
+	if diags := resourceMediaType().UpdateContext(context.Background(), d, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "outside the supported") {
+		t.Fatalf("the update preflight must refuse what Read refuses, got %v", diags)
+	}
+	_ = ok
+}
+
+func TestActionRead_RefusesOutOfModelValues(t *testing.T) {
+	// Values a plan could never produce must not enter state: the next
+	// update would write them back (or silently normalise them).
+	okAction := strings.NewReplacer("%OP%", "0", "%DM%", "1").Replace(actionFixture)
+	for name, tc := range map[string]struct{ fixture, want string }{
+		"evaltype 5":       {strings.Replace(okAction, `"evaltype":"2"`, `"evaltype":"5"`, 1), "evaltype 5"},
+		"default_msg 2":    {strings.Replace(okAction, `"default_msg":"1"`, `"default_msg":"2"`, 1), "default_msg"},
+		"esc_step_from 0":  {strings.Replace(okAction, `"esc_step_from":"1"`, `"esc_step_from":"0"`, 1), "escalation steps"},
+		"severity 9":       {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"4","operator":"5","value":"9","value2":"","formulaid":"A"}`, 1), "outside 0-5"},
+		"value2 on type 0": {strings.Replace(okAction, `{"conditiontype":"0","operator":"0","value":"25","value2":"","formulaid":"A"}`, `{"conditiontype":"0","operator":"0","value":"25","value2":"x","formulaid":"A"}`, 1), "value2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := fixtureServer(t, "action.get", tc.fixture)
+			d := schema.TestResourceDataRaw(t, resourceAction().Schema, map[string]interface{}{})
+			d.SetId("10")
+			diags := resourceAction().ReadContext(context.Background(), d, c)
+			if !diags.HasError() || !strings.Contains(diags[0].Summary, tc.want) || !strings.Contains(diags[0].Summary, "terraform state rm") {
+				t.Fatalf("want a refusal mentioning %q with the hint, got %v", tc.want, diags)
+			}
+		})
+	}
+}
+
+func TestDeleteError_ConfirmFailureSurfacesBoth(t *testing.T) {
+	// The delete says "missing or no permissions", the confirming read dies
+	// on transport: both halves must reach the operator.
+	orig := &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
+	err := deleteError(context.Background(), orig, func(context.Context) error {
+		return fmt.Errorf("dial tcp 10.0.0.1:443: connection refused")
+	})
+	if err == nil || !strings.Contains(err.Error(), "confirming read failed") || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("both causes must surface, got %v", err)
+	}
+}
+
 func TestMediaTypeResource_DeleteIdempotent(t *testing.T) {
 	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
 		switch req.Method {

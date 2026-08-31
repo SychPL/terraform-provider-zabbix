@@ -97,6 +97,15 @@ func boolToFlag(b bool) string {
 	return "0"
 }
 
+// atoiOr parses s or returns the fallback (for checks where any non-numeric
+// value simply fails the enclosing predicate).
+func atoiOr(s string, fallback int) int {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	return fallback
+}
+
 func atoi(field, s string) (int, error) {
 	n, err := strconv.Atoi(s)
 	if err != nil {
@@ -135,8 +144,14 @@ func deleteError(ctx context.Context, err error, confirm func(context.Context) e
 	if err == nil || !IsObjectMissing(err) {
 		return err
 	}
-	if getErr := confirm(ctx); errors.Is(getErr, ErrNotFound) {
+	getErr := confirm(ctx)
+	switch {
+	case errors.Is(getErr, ErrNotFound):
 		return nil
+	case getErr != nil:
+		// The delete reported missing-or-no-permissions but the confirming
+		// read failed too; hiding either half would bury the real cause.
+		return fmt.Errorf("delete reported a missing object (%s) and the confirming read failed: %w", err, getErr)
 	}
 	return err
 }

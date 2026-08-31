@@ -390,6 +390,21 @@ func validateMediaTypeValues(d *schema.ResourceData) error {
 	if secs, err := parseZabbixDuration(d.Get("attempt_interval").(string)); err != nil || secs < 0 || secs > 3600 {
 		return fmt.Errorf("attempt_interval must be a duration between 0 and 1h (e.g. 10s, 1m), got %q", d.Get("attempt_interval"))
 	}
+	// Unknown references resolve at apply time and skip the schema
+	// validators; repeat every numeric range before any mutation.
+	for field, ok := range map[string]bool{
+		"max_sessions":        d.Get("max_sessions").(int) >= 0 && d.Get("max_sessions").(int) <= 100,
+		"max_attempts":        d.Get("max_attempts").(int) >= 1 && d.Get("max_attempts").(int) <= 100,
+		"smtp_port":           d.Get("smtp_port").(int) >= 1 && d.Get("smtp_port").(int) <= 65535,
+		"smtp_security":       d.Get("smtp_security").(int) >= 0 && d.Get("smtp_security").(int) <= 2,
+		"smtp_authentication": d.Get("smtp_authentication").(int) == 0 || d.Get("smtp_authentication").(int) == 1,
+		"content_type":        d.Get("content_type").(int) == 0 || d.Get("content_type").(int) == 1,
+		"email_provider":      d.Get("email_provider").(int) >= 0 && d.Get("email_provider").(int) <= 4,
+	} {
+		if !ok {
+			return fmt.Errorf("%s %d is outside the supported range", field, d.Get(field).(int))
+		}
+	}
 	if t == mediaTypeSMS && d.Get("max_sessions").(int) != 1 {
 		return fmt.Errorf("max_sessions must be 1 for SMS media types")
 	}
@@ -542,6 +557,64 @@ func resourceMediaTypeCreate(ctx context.Context, d *schema.ResourceData, m inte
 	return readAfterCreate(ctx, d, m, resourceMediaTypeRead, "media type")
 }
 
+// mediaTypeInts parses the numeric fields of an API object and validates
+// every own-type value against the schema ranges. d.Set bypasses schema
+// validators, so adopting an out-of-range value (a newer API line, an
+// intermediary) would poison the state: Read and the update preflight are
+// fail-closed on the same set instead. Empty values keep the schema default
+// (objects created outside the provider).
+func mediaTypeInts(mt *MediaType) (map[string]int, string, error) {
+	mtType, err := unmanageableMediaType(mt)
+	if err != nil {
+		return nil, "", err
+	}
+	ints := map[string]int{"type": mtType}
+	for _, f := range []string{"smtp_port", "smtp_security", "smtp_authentication", "content_type", "email_provider", "max_sessions", "max_attempts"} {
+		ints[f] = mediaTypeSchema[f].Default.(int)
+	}
+	raws := map[string]string{"max_sessions": mt.MaxSessions, "max_attempts": mt.MaxAttempts}
+	if mtType == mediaTypeEmail {
+		raws["smtp_port"], raws["smtp_security"], raws["smtp_authentication"] = mt.SMTPPort, mt.SMTPSecurity, mt.SMTPAuthentication
+		raws["content_type"], raws["email_provider"] = mt.ContentType, mt.EmailProvider
+	}
+	for field, raw := range raws {
+		if raw == "" {
+			continue
+		}
+		n, err := atoi(field, raw)
+		if err != nil {
+			return nil, "", err
+		}
+		ints[field] = n
+	}
+	for field, ok := range map[string]bool{
+		"max_sessions":        ints["max_sessions"] >= 0 && ints["max_sessions"] <= 100,
+		"max_attempts":        ints["max_attempts"] >= 1 && ints["max_attempts"] <= 100,
+		"smtp_port":           ints["smtp_port"] >= 1 && ints["smtp_port"] <= 65535,
+		"smtp_security":       ints["smtp_security"] >= 0 && ints["smtp_security"] <= 2,
+		"smtp_authentication": ints["smtp_authentication"] == 0 || ints["smtp_authentication"] == 1,
+		"content_type":        ints["content_type"] == 0 || ints["content_type"] == 1,
+		"email_provider":      ints["email_provider"] >= 0 && ints["email_provider"] <= 4,
+	} {
+		if !ok {
+			return nil, "", fmt.Errorf("has %s %d outside the supported schema range", field, ints[field])
+		}
+	}
+	attemptInterval := mediaTypeSchema["attempt_interval"].Default.(string)
+	if mt.AttemptInterval != "" {
+		attemptInterval = mt.AttemptInterval
+	}
+	if secs, err := parseZabbixDuration(attemptInterval); err != nil || secs < 0 || secs > 3600 {
+		return nil, "", fmt.Errorf("has attempt_interval %q outside the supported 0-1h range", attemptInterval)
+	}
+	if mtType == mediaTypeWebhook {
+		if secs, err := parseZabbixDuration(mt.Timeout); err != nil || secs < 1 || secs > 60 {
+			return nil, "", fmt.Errorf("has webhook timeout %q outside the supported 1-60s range", mt.Timeout)
+		}
+	}
+	return ints, attemptInterval, nil
+}
+
 func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*ZabbixClient)
 
@@ -550,42 +623,11 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 		return readError(ctx, d, "media type", err)
 	}
 
-	// The type decides everything else, so it is validated first; numeric
-	// fields are parsed only for the type they belong to, tolerating empty
-	// values (objects created outside the provider).
-	mtType, err := unmanageableMediaType(mt)
+	// The shared helper refuses everything d.Set could not have accepted;
+	// Read and the update preflight refuse exactly the same set.
+	ints, attemptInterval, err := mediaTypeInts(mt)
 	if err != nil {
 		return diag.Errorf("media type %s %s; %s", d.Id(), err, unmanageableHint)
-	}
-	// Numeric defaults come from the schema (single source); empty API values
-	// (objects created outside the provider) keep the default.
-	ints := map[string]int{"type": mtType}
-	for _, f := range []string{"smtp_port", "smtp_security", "smtp_authentication", "content_type", "email_provider", "max_sessions", "max_attempts"} {
-		ints[f] = mediaTypeSchema[f].Default.(int)
-	}
-	for field, raw := range map[string]string{"max_sessions": mt.MaxSessions, "max_attempts": mt.MaxAttempts} {
-		if raw == "" {
-			continue
-		}
-		n, err := atoi(field, raw)
-		if err != nil {
-			return diag.Errorf("media type %s: %s; %s", d.Id(), err, unmanageableHint)
-		}
-		ints[field] = n
-	}
-	if mtType == mediaTypeEmail {
-		for field, raw := range map[string]string{
-			"smtp_port": mt.SMTPPort, "smtp_security": mt.SMTPSecurity, "smtp_authentication": mt.SMTPAuthentication, "content_type": mt.ContentType, "email_provider": mt.EmailProvider,
-		} {
-			if raw == "" {
-				continue // keep the schema default
-			}
-			n, err := atoi(field, raw)
-			if err != nil {
-				return diag.Errorf("media type %s: %s; %s", d.Id(), err, unmanageableHint)
-			}
-			ints[field] = n
-		}
 	}
 	params := make([]map[string]interface{}, len(mt.Parameters))
 	for i, p := range mt.Parameters {
@@ -605,10 +647,6 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 			}
 			values[f] = mediaTypeSchema[f].Default
 		}
-	}
-	attemptInterval := mediaTypeSchema["attempt_interval"].Default.(string)
-	if mt.AttemptInterval != "" {
-		attemptInterval = mt.AttemptInterval
 	}
 	values["name"] = mt.Name
 	values["type"] = ints["type"]
@@ -638,11 +676,6 @@ func resourceMediaTypeRead(ctx context.Context, d *schema.ResourceData, m interf
 	case mediaTypeSMS:
 		values["gsm_modem"] = mt.GSMModem
 	case mediaTypeWebhook:
-		if secs, err := parseZabbixDuration(mt.Timeout); err != nil || secs < 1 || secs > 60 {
-			// d.Set bypasses schema validators; adopting an out-of-range value
-			// would poison the state, so the read is fail-closed instead.
-			return diag.Errorf("media type %s has webhook timeout %q outside the supported 1-60s range; %s", d.Id(), mt.Timeout, unmanageableHint)
-		}
 		values["script"] = mt.Script
 		values["timeout"] = mt.Timeout
 		values["process_tags"] = mt.ProcessTags == "1"
@@ -678,7 +711,7 @@ func resourceMediaTypeUpdate(ctx context.Context, d *schema.ResourceData, m inte
 		}
 		return diag.Errorf("reading media type %s: %s", d.Id(), err)
 	}
-	if _, err := unmanageableMediaType(current); err != nil {
+	if _, _, err := mediaTypeInts(current); err != nil {
 		return diag.Errorf("refusing to update media type %s: it %s; %s", d.Id(), err, unmanageableHint)
 	}
 	mt := expandMediaType(d)

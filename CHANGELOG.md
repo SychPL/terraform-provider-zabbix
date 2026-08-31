@@ -19,6 +19,14 @@
 - Host groups created by a discovery rule's group prototype (`flags=4`) are
   refused like discovered hosts: Read refuses to adopt them and Update/Delete
   are fail-closed (a response without a `flags` field refuses the mutation).
+- Reads are fail-closed on the full schema ranges: an out-of-range media type
+  value (enum, port, attempt counters, intervals) or an action shape outside
+  the supported model (unknown `evaltype`/`default_msg`, invalid escalation
+  steps or condition values) is refused instead of adopted into state; the
+  resolved-value validation before mutations repeats every schema range.
+- A transport failure during the read confirming an "object missing" delete
+  surfaces both causes; `localhost` is recognised case-insensitively; the
+  acceptance helper client honours `ZABBIX_TLS_INSECURE`/`ZABBIX_CA_CERT_FILE`.
 
 ### Changed
 

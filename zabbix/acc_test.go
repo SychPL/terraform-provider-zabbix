@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,19 +59,39 @@ func testAccPreCheck(t *testing.T) {
 	}
 }
 
+// accClientConfig builds the raw-API client config from the same environment
+// the provider under test reads - including the TLS knobs, so the suite works
+// against HTTPS with a private CA too.
+func accClientConfig() ClientConfig {
+	insecure, _ := strconv.ParseBool(os.Getenv("ZABBIX_TLS_INSECURE"))
+	return ClientConfig{
+		URL:        os.Getenv("ZABBIX_URL"),
+		Username:   os.Getenv("ZABBIX_USERNAME"),
+		Password:   os.Getenv("ZABBIX_PASSWORD"),
+		APIToken:   os.Getenv("ZABBIX_API_TOKEN"),
+		Insecure:   insecure,
+		CACertFile: os.Getenv("ZABBIX_CA_CERT_FILE"),
+	}
+}
+
 // testAccClient returns a raw API client for test setup and verification.
 func testAccClient(t *testing.T) *ZabbixClient {
 	t.Helper()
-	c, err := NewZabbixClient(ClientConfig{
-		URL:      os.Getenv("ZABBIX_URL"),
-		Username: os.Getenv("ZABBIX_USERNAME"),
-		Password: os.Getenv("ZABBIX_PASSWORD"),
-		APIToken: os.Getenv("ZABBIX_API_TOKEN"),
-	})
+	c, err := NewZabbixClient(accClientConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func TestHelperClientTLSEnv(t *testing.T) {
+	t.Setenv("ZABBIX_URL", "https://zabbix.internal/api_jsonrpc.php")
+	t.Setenv("ZABBIX_TLS_INSECURE", "1")
+	t.Setenv("ZABBIX_CA_CERT_FILE", "/etc/ssl/private-ca.pem")
+	cfg := accClientConfig()
+	if !cfg.Insecure || cfg.CACertFile != "/etc/ssl/private-ca.pem" {
+		t.Fatalf("the acceptance helper client must honour the TLS environment, got %+v", cfg)
+	}
 }
 
 // lookupID returns the first ID of an object matched by filter.
