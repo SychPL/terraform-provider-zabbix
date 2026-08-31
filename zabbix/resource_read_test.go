@@ -913,6 +913,22 @@ func TestHostMutations_RefuseDiscoveredHost(t *testing.T) {
 	if diags := r.DeleteContext(context.Background(), d2, c); !diags.HasError() || !strings.Contains(diags[0].Summary, "low-level discovery") {
 		t.Fatalf("deleting an LLD host must be refused, got %v", diags)
 	}
+
+	// A response WITHOUT any flags field cannot prove the host is not
+	// LLD-owned: mutations are fail-closed on it (Read stays tolerant).
+	noFlags := `[{"hostid":"7","host":"h","name":"h","status":"0","description":"",
+		"parentTemplates":[],"hostgroups":[{"groupid":"2"}],"interfaces":[]}]`
+	c2 := fixtureServer(t, "host.get", noFlags)
+	d3 := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	d3.SetId("7")
+	if diags := r.UpdateContext(context.Background(), d3, c2); !diags.HasError() || !strings.Contains(diags[0].Summary, "no flags field") {
+		t.Fatalf("a flagless response must refuse the update, got %v", diags)
+	}
+	d4 := schema.TestResourceDataRaw(t, r.Schema, map[string]interface{}{"host": "h", "groups": []interface{}{"2"}})
+	d4.SetId("7")
+	if diags := r.DeleteContext(context.Background(), d4, c2); !diags.HasError() || !strings.Contains(diags[0].Summary, "no flags field") {
+		t.Fatalf("a flagless response must refuse the delete, got %v", diags)
+	}
 }
 
 func TestHostRead_RefusesDiscoveredHost(t *testing.T) {
@@ -1143,7 +1159,7 @@ func TestHostUpdate_TemplatesClearFromAPIState(t *testing.T) {
 		case "hostinterface.update":
 			return map[string][]string{"interfaceids": {"5"}}, nil
 		case "host.get":
-			return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","description":"",
+			return json.RawMessage(`[{"hostid":"1","host":"h","name":"h","status":"0","flags":"0","description":"",
 				"parentTemplates":[{"templateid":"10001"},{"templateid":"10050"}],"hostgroups":[{"groupid":"2"}],
 				"interfaces":[{"interfaceid":"5","type":"1","main":"1","useip":"1","ip":"192.0.2.1","dns":"","port":"10050"}]}]`), nil
 		}
@@ -1197,6 +1213,21 @@ func TestHostUpdate_PartialFailureKeepsID(t *testing.T) {
 	}
 }
 
+func TestHostGroupUpdate_VanishedGroup(t *testing.T) {
+	// The group was deleted externally between plan and apply: the error must
+	// say so instead of surfacing the raw permissions-or-missing API message.
+	s := newRPCServer(t, func(req rpcRequest) (interface{}, *JsonRpcError) {
+		return nil, &JsonRpcError{Code: -32500, Message: "Application error.", Data: objectMissing}
+	})
+	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
+	d := schema.TestResourceDataRaw(t, resourceHostGroup().Schema, map[string]interface{}{"name": "renamed"})
+	d.SetId("42")
+	diags := resourceHostGroup().UpdateContext(context.Background(), d, c)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "deleted externally") || d.Id() != "42" {
+		t.Fatalf("a vanished group must produce a clear error with the ID kept, got %v id=%q", diags, d.Id())
+	}
+}
+
 func TestHostGroupCreate_EmptyReadKeepsID(t *testing.T) {
 	// A read that comes back empty right after a successful create is a
 	// consistency problem; forgetting the ID would orphan the new object.
@@ -1228,7 +1259,7 @@ func TestHostUpdate_NoAgentInterface(t *testing.T) {
 		case "hostinterface.create":
 			return map[string][]string{"interfaceids": {"6"}}, nil
 		case "host.get":
-			return json.RawMessage(`[{"hostid":"1","host":"snmp-only","name":"snmp-only","status":"0","description":"",
+			return json.RawMessage(`[{"hostid":"1","host":"snmp-only","name":"snmp-only","status":"0","flags":"0","description":"",
 				"parentTemplates":[],"hostgroups":[{"groupid":"2"}],
 				"interfaces":[{"interfaceid":"5","type":"2","main":"1","useip":"1","ip":"10.0.0.2","dns":"","port":"161"}]}]`), nil
 		}

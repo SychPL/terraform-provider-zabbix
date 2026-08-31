@@ -505,6 +505,7 @@ resource "zabbix_media_type" "mail" {
   username            = "zabbix"
   password            = %q
   content_type        = 0
+  email_provider      = 3
   description         = "managed by terraform"
   max_attempts        = 5
 }`, name, port, password)
@@ -519,6 +520,7 @@ resource "zabbix_media_type" "mail" {
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "smtp_port", "587"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "password", "hunter2"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "content_type", "0"),
+				resource.TestCheckResourceAttr("zabbix_media_type.mail", "email_provider", "3"),
 				resource.TestCheckResourceAttr("zabbix_media_type.mail", "max_attempts", "5"),
 			)},
 			// Update without a type change must round-trip the changed values.

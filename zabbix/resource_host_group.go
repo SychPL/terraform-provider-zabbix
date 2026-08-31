@@ -62,6 +62,9 @@ func resourceHostGroupUpdate(ctx context.Context, d *schema.ResourceData, m inte
 	d.Partial(true)
 	if d.HasChange("name") {
 		if err := client.UpdateHostGroup(ctx, d.Id(), d.Get("name").(string)); err != nil {
+			if IsObjectMissing(err) {
+				return diag.Errorf("host group %s vanished from Zabbix after the plan was created (deleted externally?); re-run terraform apply to refresh and recreate it", d.Id())
+			}
 			return diag.Errorf("updating host group %s: %s", d.Id(), err)
 		}
 	}
