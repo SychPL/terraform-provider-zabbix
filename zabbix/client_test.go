@@ -724,6 +724,18 @@ func TestMediaTypeParams_TypeAware(t *testing.T) {
 	if p, ok := wh["parameters"].([]MediaTypeParam); !ok || p == nil {
 		t.Errorf("webhook without parameters must send an empty array, got %#v", wh["parameters"])
 	}
+	// Parameters carry webhook secrets: names and values must go out verbatim
+	// and in order.
+	whp := mediaTypeParams(&MediaType{Type: "4", Script: "return 1;", Timeout: "30s",
+		Parameters: []MediaTypeParam{{Name: "url", Value: "https://h"}, {Name: "token", Value: "s3cr"}}})
+	if ps := whp["parameters"].([]MediaTypeParam); len(ps) != 2 ||
+		ps[0] != (MediaTypeParam{Name: "url", Value: "https://h"}) ||
+		ps[1] != (MediaTypeParam{Name: "token", Value: "s3cr"}) {
+		t.Errorf("webhook parameters must be sent verbatim, got %#v", whp["parameters"])
+	}
+	if whp["script"] != "return 1;" || whp["timeout"] != "30s" {
+		t.Errorf("webhook payload core fields: script=%v timeout=%v", whp["script"], whp["timeout"])
+	}
 	// Fields of other types are cleared, never carried over.
 	if wh["smtp_server"] != "" || wh["passwd"] != "" || wh["smtp_port"] != "25" {
 		t.Errorf("webhook must clear email fields, got smtp_server=%v passwd=%v", wh["smtp_server"], wh["passwd"])
@@ -765,7 +777,17 @@ func TestActionParams_EventSourceOnlyOnCreate(t *testing.T) {
 		return map[string][]string{"actionids": {"7"}}, nil
 	})
 	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
-	a := &Action{ActionID: "7", Name: "a", EventSource: "0"}
+	subject, message := "S", "M"
+	a := &Action{ActionID: "7", Name: "a", EventSource: "0", Status: "0", EscPeriod: "1h",
+		PauseSuppressed: "1", PauseSymptoms: "1", NotifyIfCanceled: "0",
+		Filter: ActionFilter{EvalType: "2", Conditions: []ActionCondition{
+			{ConditionType: "26", Operator: "2", Value: "prod", Value2: "env"}}},
+		Operations: []ActionOperation{{OperationType: "0", EscPeriod: "0", EscStepFrom: "1", EscStepTo: "1",
+			OpMessage:    &ActionOpMessage{MediaTypeID: "46", DefaultMsg: "0", Subject: &subject, Message: &message},
+			OpMessageGrp: []ActionOpMessageGrp{{Usrgrpid: "7"}},
+			OpMessageUsr: []ActionOpMessageUsr{{UserID: "1"}},
+		}},
+	}
 
 	if _, err := c.CreateAction(context.Background(), a); err != nil {
 		t.Fatal(err)
@@ -783,13 +805,35 @@ func TestActionParams_EventSourceOnlyOnCreate(t *testing.T) {
 	if _, ok := update["eventsource"]; ok {
 		t.Error("update must not send immutable eventsource")
 	}
+	// Every critical value must survive into the wire payload verbatim: a
+	// dropped value2 or a mangled recipient ID would build a semantically
+	// wrong notification that the API happily accepts.
 	for _, payload := range []map[string]interface{}{create, update} {
-		if ops, ok := payload["operations"].([]interface{}); !ok || ops == nil {
-			t.Errorf("operations must be an array, got %#v", payload["operations"])
+		if payload["name"] != "a" || payload["esc_period"] != "1h" || payload["pause_suppressed"] != "1" ||
+			payload["pause_symptoms"] != "1" || payload["notify_if_canceled"] != "0" {
+			t.Errorf("action core fields: %#v", payload)
 		}
-		filter, _ := payload["filter"].(map[string]interface{})
-		if conds, ok := filter["conditions"].([]interface{}); !ok || conds == nil {
-			t.Errorf("filter.conditions must be an array, got %#v", filter["conditions"])
+		filter := payload["filter"].(map[string]interface{})
+		if filter["evaltype"] != "2" {
+			t.Errorf("evaltype: %#v", filter["evaltype"])
+		}
+		cond := filter["conditions"].([]interface{})[0].(map[string]interface{})
+		if cond["conditiontype"] != "26" || cond["operator"] != "2" || cond["value"] != "prod" || cond["value2"] != "env" {
+			t.Errorf("condition payload: %#v", cond)
+		}
+		op := payload["operations"].([]interface{})[0].(map[string]interface{})
+		if op["operationtype"] != "0" || op["esc_period"] != "0" || op["esc_step_from"] != "1" || op["esc_step_to"] != "1" {
+			t.Errorf("operation core fields: %#v", op)
+		}
+		om := op["opmessage"].(map[string]interface{})
+		if om["mediatypeid"] != "46" || om["default_msg"] != "0" || om["subject"] != "S" || om["message"] != "M" {
+			t.Errorf("opmessage payload: %#v", om)
+		}
+		if grp := op["opmessage_grp"].([]interface{})[0].(map[string]interface{}); grp["usrgrpid"] != "7" {
+			t.Errorf("opmessage_grp payload: %#v", op["opmessage_grp"])
+		}
+		if usr := op["opmessage_usr"].([]interface{})[0].(map[string]interface{}); usr["userid"] != "1" {
+			t.Errorf("opmessage_usr payload: %#v", op["opmessage_usr"])
 		}
 	}
 }
@@ -800,7 +844,9 @@ func TestUpdateHost_NoInterfacesAndTemplatesClear(t *testing.T) {
 	})
 	c := newTestClient(t, s, ClientConfig{APIToken: "t"})
 
-	err := c.UpdateHost(context.Background(), "1", &HostSpec{Host: "h", GroupIDs: []string{"2"}}, []string{"10001"})
+	err := c.UpdateHost(context.Background(), "1",
+		&HostSpec{Host: "h", Name: "visible", Status: "0", Description: "d",
+			GroupIDs: []string{"2"}, TemplateIDs: []string{"10042"}}, []string{"10001"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -814,6 +860,21 @@ func TestUpdateHost_NoInterfacesAndTemplatesClear(t *testing.T) {
 	}
 	if _, ok := params["templates"].([]interface{}); !ok {
 		t.Error("templates must be sent as an array (empty clears links)")
+	}
+	// Wrong IDs here would silently re-home the host onto other, perfectly
+	// valid objects - assert the concrete values, not just the shapes.
+	if params["hostid"] != "1" || params["host"] != "h" || params["name"] != "visible" ||
+		params["status"] != "0" || params["description"] != "d" {
+		t.Errorf("host.update core fields: %#v", params)
+	}
+	if g := params["groups"].([]interface{})[0].(map[string]interface{}); g["groupid"] != "2" {
+		t.Errorf("groups payload: %#v", params["groups"])
+	}
+	if tpl := params["templates"].([]interface{})[0].(map[string]interface{}); tpl["templateid"] != "10042" {
+		t.Errorf("templates payload: %#v", params["templates"])
+	}
+	if tc := params["templates_clear"].([]interface{})[0].(map[string]interface{}); tc["templateid"] != "10001" {
+		t.Errorf("templates_clear payload: %#v", params["templates_clear"])
 	}
 }
 

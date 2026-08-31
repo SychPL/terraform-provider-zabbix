@@ -174,7 +174,11 @@ resource "zabbix_host" "h" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
-		CheckDestroy:      testAccCheckGone(t, "zabbix_host.h", func(c *ZabbixClient, id string) error { _, err := c.GetHost(context.Background(), id); return err }),
+		CheckDestroy: resource.ComposeTestCheckFunc(
+			testAccCheckGone(t, "zabbix_host.h", func(c *ZabbixClient, id string) error { _, err := c.GetHost(context.Background(), id); return err }),
+			testAccCheckGone(t, "zabbix_host_group.g", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
+			testAccCheckGone(t, "zabbix_host_group.g2", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
+		),
 		Steps: []resource.TestStep{
 			{
 				Config: cfgIP,
@@ -387,7 +391,10 @@ resource "zabbix_host" "h" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
-		CheckDestroy:      testAccCheckGone(t, "zabbix_host.h", func(c *ZabbixClient, id string) error { _, err := c.GetHost(context.Background(), id); return err }),
+		CheckDestroy: resource.ComposeTestCheckFunc(
+			testAccCheckGone(t, "zabbix_host.h", func(c *ZabbixClient, id string) error { _, err := c.GetHost(context.Background(), id); return err }),
+			testAccCheckGone(t, "zabbix_host_group.g", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
+		),
 		Steps: []resource.TestStep{
 			{Config: bare, Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_host.h", "ip", ""),
@@ -878,7 +885,10 @@ resource "zabbix_media_type" "wh" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
-		CheckDestroy:      testAccCheckGone(t, "zabbix_media_type.wh", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
+		CheckDestroy: resource.ComposeTestCheckFunc(
+			testAccCheckGone(t, "zabbix_media_type.wh", func(c *ZabbixClient, id string) error { _, err := c.GetMediaType(context.Background(), id); return err }),
+			testAccCheckGone(t, "zabbix_host_group.g", func(c *ZabbixClient, id string) error { _, err := c.GetHostGroup(context.Background(), id); return err }),
+		),
 		Steps: []resource.TestStep{
 			{Config: cfg(name+"-grp", name+"-wh"), Check: resource.ComposeTestCheckFunc(
 				resource.TestCheckResourceAttr("zabbix_host_group.g", "name", name+"-grp"),
