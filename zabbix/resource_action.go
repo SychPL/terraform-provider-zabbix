@@ -105,7 +105,7 @@ func resourceAction() *schema.Resource {
 							Type:        schema.TypeString,
 							Optional:    true,
 							Default:     "",
-							Description: "Second value; the tag name for condition type 26 (event tag value).",
+							Description: "Second value: required for condition type 26 (it carries the tag name, `value` the tag value) and rejected at plan time for every other condition type.",
 						},
 					},
 				},

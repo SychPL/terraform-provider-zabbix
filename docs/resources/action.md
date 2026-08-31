@@ -111,7 +111,7 @@ Required:
 Optional:
 
 - `operator` (Number) Condition operator: 0 - equals, 1 - does not equal, 2 - contains, 3 - does not contain, 4 - in, 5 - >=, 6 - <=, 7 - not in. Allowed values depend on `conditiontype` and are validated at plan time.
-- `value2` (String) Second value; the tag name for condition type 26 (event tag value).
+- `value2` (String) Second value: required for condition type 26 (it carries the tag name, `value` the tag value) and rejected at plan time for every other condition type.
 
 
 <a id="nestedblock--timeouts"></a>
