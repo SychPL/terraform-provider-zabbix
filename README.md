@@ -27,7 +27,7 @@ Generated reference documentation lives in [docs/](docs/).
 terraform {
   required_providers {
     zabbix = {
-      source = "Tensai123/zabbix"
+      source = "SychPL/zabbix"
     }
   }
 }
@@ -157,7 +157,7 @@ Build the binary and point Terraform at the checkout with a
 # ~/.terraformrc (Linux/macOS) or %APPDATA%\terraform.rc (Windows)
 provider_installation {
   dev_overrides {
-    "Tensai123/zabbix" = "/path/to/terraform-provider-zabbix"
+    "SychPL/zabbix" = "/path/to/terraform-provider-zabbix"
   }
   direct {}
 }

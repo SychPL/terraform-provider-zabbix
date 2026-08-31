@@ -34,7 +34,7 @@ whose permissions cover everything under management.
 terraform {
   required_providers {
     zabbix = {
-      source = "Tensai123/zabbix"
+      source = "SychPL/zabbix"
     }
   }
 }

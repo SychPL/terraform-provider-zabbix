@@ -59,7 +59,7 @@ jobs:
           go build -o /tmp/tfdev/terraform-provider-zabbix .
           cat > /tmp/dev.tfrc <<EOF
           provider_installation {
-            dev_overrides { "Tensai123/zabbix" = "/tmp/tfdev" }
+            dev_overrides { "SychPL/zabbix" = "/tmp/tfdev" }
             direct {}
           }
           EOF

@@ -29,7 +29,7 @@ Poza zakresem (v0.3+), decyzje z recenzji:
 - wiele interfejsow hosta, interfejsy SNMP/IPMI/JMX, makra, tagi, proxy, inventory
 - parametry media type typu Script (`sortorder`/`value`)
 - migracja SDKv2 -> terraform-plugin-framework (osobny etap po hardeningu)
-- publikacja w Registry (sam cut-release); namespace ujednolicony na `Tensai123` (repo wydajace artefakty)
+- publikacja w Registry (sam cut-release); namespace wydawniczy: `SychPL` (fork publikujacy artefakty; upstream `Tensai123` to konkurent - bez PR-ow)
 
 Wersja docelowa API: Zabbix 6.4. Naglowek `Authorization: Bearer` (wspierany od 6.4)
 zamiast pola `auth` w body - kompatybilny z 7.x. Od rundy 22 macierz akceptacji CI
